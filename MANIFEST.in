@@ -1,0 +1,2 @@
+include dodi/*
+include dodi/tests/*
