@@ -11,16 +11,26 @@ import pickle
 import numpy as np
 
 from . import pairing, io_funcs, samclips
+from sys import stderr
 
 
 cdef void process_template(read_template):
     paired = io_funcs.sam_to_array(read_template)
+
+    # if read_template['name'] == 'V300096939L3C004R0130394504':
+    #     print(read_template, file=stderr)
+    #     print("PAIRED", file=stderr)
+    #     print(paired, file=stderr)
 
     if paired:
         return
 
     res = pairing.process(read_template)
 
+    # if read_template['name'] == 'V300096939L3C004R0130394504':
+    #     #     print(read_template)
+    #     #     print(read_template['data'].astype(int))
+    #     #     print(res)
     if res:
         read_template["passed"] = True
         io_funcs.add_scores(read_template, *res)

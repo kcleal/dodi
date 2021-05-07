@@ -257,17 +257,22 @@ cdef set_supp_flags(sup, pri, ori_primary_reversed, primary_will_be_reversed):
         supflag = set_bit(supflag, 8, 0)
 
     rev_sup = False
+    # echo("ori primery rev", ori_primary_reversed, primary_will_be_reversed)
+    # echo("primary:", pri)
+
     if ori_primary_reversed:
         if not supflag & 16:  # Read on forward strand
             rev_sup = True
-
+        # echo("1", rev_sup)
     elif supflag & 16:  # Read on reverse strand
         if not ori_primary_reversed:
             rev_sup = True
+        # echo("2", rev_sup)
 
-    elif not supflag & 16:  # Read on forward strand
-        if primary_will_be_reversed and not priflag & 16:  # Primary will end up on forward
-            rev_sup = True  # Old primary on reverse, so needs rev comp
+    # elif not supflag & 16:  # Read on forward strand
+    #     if primary_will_be_reversed and not priflag & 16:  # Primary will end up on forward
+    #         rev_sup = True  # Old primary on reverse, so needs rev comp
+    #     echo("3", rev_sup)
 
     sup[0] = supflag
     sup[5] = pri[1]
@@ -395,14 +400,15 @@ cdef add_sequence_back(item, reverse_me, template):
         else:
             key = ""
         key_name = f"{key}{name}_seq"
+        key_name_q = f"{key}{name}_q"
         s = template[key_name][start:end]  # "%s%s_seq" % (key, name)
-        q = template[key_name][start:end]  # "%s%s_q" % (key, name)
+        q = template[key_name_q][start:end]  # "%s%s_q" % (key, name)
 
         if len(s) == cigar_length:
-            if reverse_me:
-                item[8] = io_funcs.reverse_complement(s, len(s))
-                item[9] = q[::-1]
-            else:
+            # if reverse_me:
+            #     item[8] = io_funcs.reverse_complement(s, len(s))
+            #     item[9] = q[::-1]
+            # else:
                 item[8] = s
                 item[9] = q
 
@@ -519,6 +525,7 @@ cpdef list fixsam(dict template):
     primary2 = None
     rev_A = False
     rev_B = False
+
     for l in sam:
 
         l[0] = int(l[0])  # Convert flag to int
@@ -570,14 +577,22 @@ cpdef list fixsam(dict template):
         rev_A, rev_B, primary1, primary2 = set_mate_flag(primary1, primary2, max_d, template["read1_reverse"], template["read2_reverse"])
 
         # Check if supplementary needs reverse complementing
+        # echo(rev_A, rev_B)
+        # echo("primary1", primary1, template["read1_seq"])
+        # echo("primary2", primary2, template["read2_seq"])
+        # echo("read1_reverse", template["read1_reverse"], "read2_reverse", template["read2_reverse"])
         for i in range(len(out)):
-            if out[i][1][0] & 64:  # First in pair  Note primary2 and primary1 were switched
+            # echo("out", out[i][1])
+            if out[i][1][0] & 64:  # First in pair  Note primary2 and primary1 order
                 revsup = set_supp_flags(out[i][1], primary2, template["read1_reverse"], rev_A)
+                # echo("---&64", revsup)
             else:
                 revsup = set_supp_flags(out[i][1], primary1, template["read2_reverse"], rev_B)
+                # echo("else", revsup)
 
             if revsup:
                 out[i][2] = True
+                # echo("revsup", out[i][2])
 
     if template["paired_end"]:
         out = [('pri', primary1, rev_A), ('pri', primary2, rev_B)] + out
@@ -586,6 +601,7 @@ cpdef list fixsam(dict template):
     else:
         out = [('pri', primary1, rev_A)] + out
 
+    # echo("reverse pattern", [(i[0], i[2]) for i in out])
     # Add read seq info back in if necessary, before reverse complementing. Check for hard clips and clip as necessary
 
     for a_type, aln, reverse_me in out:
@@ -593,13 +609,15 @@ cpdef list fixsam(dict template):
         if aln:  # None here means no alignment for primary2
 
             # Do for all supplementary
+            # echo(a_type, "reverseme", reverse_me, aln[8], aln[8] == "*" or "H" in aln[4])
             if aln[8] == "*" or "H" in aln[4]:  # or aln[0] & 2048:  # Sequence might be "*", needs adding back in
 
                 aln = add_sequence_back(aln, reverse_me, template)
-
-            elif reverse_me:
-                aln[8] = io_funcs.reverse_complement(str(aln[8]), len(aln[8]))
-                aln[9] = aln[9][::-1]
+                # echo("aln here", aln, template["read1_seq"])
+            # elif reverse_me:
+                if reverse_me:
+                    aln[8] = io_funcs.reverse_complement(str(aln[8]), len(aln[8]))
+                    aln[9] = aln[9][::-1]
 
             # Turn off not primary here
             aln[0] = set_bit(aln[0], 8, 0)

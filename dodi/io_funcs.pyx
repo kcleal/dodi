@@ -205,7 +205,7 @@ def iterate_mappings(args, version):
     name = ""
     rows = []
     header_string = next(inputstream)
-    header_string += "@PG\tID:DYSGU\tPN:dysgu choose\tVN:{}\tCL:{}\n".format(version, arg_str)
+    header_string += "@PG\tID:DODI\tPN:dodi choose alignments\tVN:{}\tCL:{}\n".format(version, arg_str)
 
     yield header_string
 
