@@ -119,7 +119,7 @@ cdef tuple optimal_path(np.ndarray[DTYPE_t, ndim=2] segments,
     # Next best node score, for finding the secondary path
     cdef np.ndarray[np.float_t, ndim=1] nb_node_scores = np.zeros(segments.shape[0], dtype=np.float)
 
-    normal_jumps = set([])  # Keep track of which alignments form 'normal' pairs between read-pairs. Alas native python
+    normal_jumps = set([])  # Keep track of which alignments form 'normal' pairs between read-pairs
 
     cdef int i, j, p, normal_end_index, proper_pair # FR,
     cdef float chr1, pos1, start1, end1, score1, row_index1, strand1, r1,\
