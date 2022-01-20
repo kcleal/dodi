@@ -7,6 +7,7 @@ from __future__ import absolute_import
 import re
 import click
 from . import io_funcs
+from sys import stderr
 
 
 def echo(*arg):
@@ -257,22 +258,14 @@ cdef set_supp_flags(sup, pri, ori_primary_reversed, primary_will_be_reversed):
         supflag = set_bit(supflag, 8, 0)
 
     rev_sup = False
-    # echo("ori primery rev", ori_primary_reversed, primary_will_be_reversed)
-    # echo("primary:", pri)
 
     if ori_primary_reversed:
         if not supflag & 16:  # Read on forward strand
             rev_sup = True
-        # echo("1", rev_sup)
+
     elif supflag & 16:  # Read on reverse strand
         if not ori_primary_reversed:
             rev_sup = True
-        # echo("2", rev_sup)
-
-    # elif not supflag & 16:  # Read on forward strand
-    #     if primary_will_be_reversed and not priflag & 16:  # Primary will end up on forward
-    #         rev_sup = True  # Old primary on reverse, so needs rev comp
-    #     echo("3", rev_sup)
 
     sup[0] = supflag
     sup[5] = pri[1]
@@ -313,7 +306,8 @@ cdef add_sequence_back(item, reverse_me, template):
         q = template["read1_q"]
 
     if not seq:
-        return item
+
+        return item, False
 
     if len(seq) != string_length:
         if not flag & 2048:  # Always replace primary seq
@@ -322,28 +316,31 @@ cdef add_sequence_back(item, reverse_me, template):
                 item[8] = seq
                 if q:
                     item[9] = q
-                return item
+                return item, True
             else:
-                return item  # todo try something here
+
+                return item, False  # todo try something here
 
         elif template["replace_hard"] and q != "*":
             # Sometimes current read had a hard-clip in cigar, but the primary read was not trimmed
             if len(seq) != cigar_length:
-                return item  # Cigar length is not set properly by mapper
+
+                return item, False  # Cigar length is not set properly by mapper
             # If this is true, reset the Hard-clips with Soft-clips
             item[4] = item[4].replace("H", "S")
             item[8] = seq
             if q:
                 item[9] = q
-            return item
+            return item, True
 
-        return item
+        return item, False
 
     # Occasionally the H is missing, means its impossible to add sequence back in
 
     if (flag & 64 and len(template["read1_seq"]) > cigar_length) or \
             (flag & 128 and len(template["read2_seq"]) > cigar_length):
-        return item
+
+        return item, False
 
     cdef int start = 0
     cdef int end = 0
@@ -361,7 +358,8 @@ cdef add_sequence_back(item, reverse_me, template):
         else:
             end = len(template["read2_seq"])
     else:
-        return item  # read sequence is None or bad flag
+
+        return item, False  # read sequence is None or bad flag
 
     # Try and replace H with S
 
@@ -405,12 +403,8 @@ cdef add_sequence_back(item, reverse_me, template):
         q = template[key_name_q][start:end]  # "%s%s_q" % (key, name)
 
         if len(s) == cigar_length:
-            # if reverse_me:
-            #     item[8] = io_funcs.reverse_complement(s, len(s))
-            #     item[9] = q[::-1]
-            # else:
-                item[8] = s
-                item[9] = q
+            item[8] = s
+            item[9] = q
 
     # Try and use the supplied fq file to replace the sequence
     elif template[f_q_name] != 0 and len(template[f_q_name]) > len(item[9]):  # "fq_%s_q" % name
@@ -441,7 +435,7 @@ cdef add_sequence_back(item, reverse_me, template):
         raise ValueError
 
     assert len(item[8]) == cigar_length
-    return item
+    return item, True
 
 
 cdef list replace_sa_tags(alns):
@@ -464,7 +458,7 @@ cdef list replace_sa_tags(alns):
 
             strand = "-" if flag & 16 else "+"
             cigar = j[4]
-            sa = f"{chrom},{pos},{strand},{cigar},{j[0]},{mapq},{nm}"
+            sa = f"{chrom},{pos},{strand},{cigar},{mapq},{nm}"
 
             key = (flag & 64, 1 if flag & 2048 else 0)
             if key in sa_tags:
@@ -484,6 +478,7 @@ cdef list replace_sa_tags(alns):
         return out
     else:
         # Might need to remove SA tags
+
         return [(i, [item for idx, item in enumerate(j) if idx <= 9 or (idx > 9 and item[:2] != "SA")], ii) for i, j, ii in alns]
 
 
@@ -514,7 +509,8 @@ cdef list replace_mc_tags(alns):
 
 cpdef list fixsam(dict template):
 
-    sam = [template['inputdata'][i] for i in template['rows']]  # Get chosen rows
+    sam = [template['inputdata'][i[5]] for i in template['rows']]  # Get chosen rows
+
     max_d = template['max_d']
 
     paired = False if template["read2_length"] is 0 else True
@@ -548,12 +544,15 @@ cpdef list fixsam(dict template):
             os = "ZO:i:0"
         l += [
               "ZA:i:" + str(xs),
-              "ZP:Z:" + str(round(score_mat["dis_to_next_path"], 0)),
-              "ZN:Z:" + str(round(score_mat["dis_to_normal"], 2)),
-              "ZS:Z:" + str(round(score_mat["path_score"], 2)),
-              "ZM:Z:" + str(round(score_mat["normal_pairings"], 1)),
+              "ZP:f:" + str(round(score_mat["dis_to_next_path"], 0)),
+              "ZN:f:" + str(round(score_mat["dis_to_normal"], 2)),
+              "ZS:f:" + str(round(score_mat["path_score"], 2)),
+              "ZM:f:" + str(round(score_mat["normal_pairings"], 1)),
               os
               ]
+
+        if round(score_mat["path_score"], 2) < 0:
+            echo('ERROR path socre < 0', template['name'], l)
 
         if aln_info_0:
             if rid == "1":
@@ -574,25 +573,31 @@ cpdef list fixsam(dict template):
 
     if paired and template["paired_end"]:
 
+        # rev_A/B are set to true/false indicating if the primary aligns should eb reverse complemented
         rev_A, rev_B, primary1, primary2 = set_mate_flag(primary1, primary2, max_d, template["read1_reverse"], template["read2_reverse"])
 
         # Check if supplementary needs reverse complementing
-        # echo(rev_A, rev_B)
-        # echo("primary1", primary1, template["read1_seq"])
-        # echo("primary2", primary2, template["read2_seq"])
-        # echo("read1_reverse", template["read1_reverse"], "read2_reverse", template["read2_reverse"])
+
         for i in range(len(out)):
-            # echo("out", out[i][1])
+
             if out[i][1][0] & 64:  # First in pair  Note primary2 and primary1 order
                 revsup = set_supp_flags(out[i][1], primary2, template["read1_reverse"], rev_A)
-                # echo("---&64", revsup)
+
             else:
                 revsup = set_supp_flags(out[i][1], primary1, template["read2_reverse"], rev_B)
-                # echo("else", revsup)
 
             if revsup:
                 out[i][2] = True
-                # echo("revsup", out[i][2])
+
+        # increase mapq of supplementary to match primary if possible
+        # for i in out:
+        #     if i[1][0] & 64 and primary1[4]:  # first in pair
+        #         mapq_pri = int(primary1[4])
+        #         mapq_sup = int(i[1][4])
+        #
+        #     if mapq_pri > mapq_sup:
+
+
 
     if template["paired_end"]:
         out = [('pri', primary1, rev_A), ('pri', primary2, rev_B)] + out
@@ -601,7 +606,6 @@ cpdef list fixsam(dict template):
     else:
         out = [('pri', primary1, rev_A)] + out
 
-    # echo("reverse pattern", [(i[0], i[2]) for i in out])
     # Add read seq info back in if necessary, before reverse complementing. Check for hard clips and clip as necessary
 
     for a_type, aln, reverse_me in out:
@@ -609,13 +613,11 @@ cpdef list fixsam(dict template):
         if aln:  # None here means no alignment for primary2
 
             # Do for all supplementary
-            # echo(a_type, "reverseme", reverse_me, aln[8], aln[8] == "*" or "H" in aln[4])
             if aln[8] == "*" or "H" in aln[4]:  # or aln[0] & 2048:  # Sequence might be "*", needs adding back in
 
-                aln = add_sequence_back(aln, reverse_me, template)
-                # echo("aln here", aln, template["read1_seq"])
-            # elif reverse_me:
-                if reverse_me:
+                aln, success = add_sequence_back(aln, reverse_me, template)
+
+                if reverse_me and success:
                     aln[8] = io_funcs.reverse_complement(str(aln[8]), len(aln[8]))
                     aln[9] = aln[9][::-1]
 
@@ -637,6 +639,9 @@ cpdef list fixsam(dict template):
                 out[j][1][0] = flag
 
         out[j][1][0] = str(out[j][1][0])
+
+        if out[j][1][2] == '0':
+            echo('ERROR', out, template['name'])
 
     return [i[1] for i in out if i[1] != 0]
 

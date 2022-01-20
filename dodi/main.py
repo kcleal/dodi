@@ -5,6 +5,17 @@ import os
 from click.testing import CliRunner
 from . import input_stream_alignments
 from sys import stderr
+import logging
+import sys
+
+
+logFormatter = logging.Formatter("%(asctime)s [%(levelname)-7.7s]  %(message)s")
+rootLogger = logging.getLogger()
+rootLogger.setLevel(logging.INFO)
+
+consoleHandler = logging.StreamHandler()
+consoleHandler.setFormatter(logFormatter)
+rootLogger.addHandler(consoleHandler)
 
 
 defaults = {"paired": "True",
@@ -18,15 +29,21 @@ defaults = {"paired": "True",
             "inter_cost": 2,
             "u": 9,
             "match_score": 1,
-            "bias": 1.15
+            "bias": 1.15,
+            "secondary": 'True'
             }
 
 cpu_range = click.IntRange(min=1, max=cpu_count())
 version = pkg_resources.require("dodi")[0].version
 
 
+def show_params():
+    args = " ".join(sys.argv[1:])
+    logging.info(f"[dodi] Version: {version} {args}")
+
+
 @click.command()
-@click.argument("sam", type=click.File('r', encoding="ascii"), required=True)
+@click.argument("sam", type=click.File('r', encoding="ascii"), required=False)
 @click.argument("output", required=False, type=click.Path())
 @click.option("--paired", help="Paired end reads (or single)", default=defaults["paired"],
               type=click.Choice(["True", "False"]), show_default=True)
@@ -34,6 +51,8 @@ version = pkg_resources.require("dodi")[0].version
               default=defaults["template_size"], type=str, show_default=True)
 # @click.option('--mq', help="MapQ recalibration model", default=defaults["mq"],
 #               type=click.Path(), show_default=True, required=False)
+@click.option("-S", "--secondary", help="Output secondary mappings", type=click.Choice(["True", "False"]),
+              show_default=True, default=defaults["secondary"])
 @click.option("--replace-hardclips",  help="Replace hard-clips with soft-clips when possible",
               default=defaults["replace_hardclips"], type=click.Choice(["True", "False"]), show_default=True)
 @click.option("--fq1",  help="Fastq/fasta reads 1, used to add soft-clips to all hard-clipped read 1 alignments",
@@ -62,7 +81,9 @@ def dodi_aligner(**kwargs):
     """Choose an optimal set of alignments from from a collection of candidate alignments.
     If reads are paired, alignments must be sorted by read-name with the bit flag
     designating read_1 vs read_2."""
-    print(kwargs, file=stderr)
+
+    show_params()
+
     input_stream_alignments.process_reads(kwargs)
 
 

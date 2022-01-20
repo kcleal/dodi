@@ -9,9 +9,15 @@ import time
 import datetime
 import pickle
 import numpy as np
+from sys import stderr
+import logging
 
 from . import pairing, io_funcs, samclips
 from sys import stderr
+
+
+def echo(*arg):
+    click.echo(arg, err=True)
 
 
 cdef void process_template(read_template):
@@ -35,7 +41,8 @@ cdef void process_template(read_template):
         read_template["passed"] = True
         io_funcs.add_scores(read_template, *res)
         io_funcs.choose_supplementary(read_template)
-        io_funcs.score_alignments(read_template, read_template["ri"], read_template['rows'], read_template['data'])
+        if read_template['secondary']:
+            io_funcs.score_alignments(read_template, read_template['rows'], read_template['data'])
 
 
 cpdef list to_output(dict template):
@@ -118,10 +125,80 @@ cpdef list job(data_tuple):
     return sam_temp
 
 
+def median(L):
+    # Stolen from https://github.com/arq5x/lumpy-sv/blob/master/scripts/pairend_distro.py
+    if len(L) % 2 == 1:
+        return L[int(len(L)/2)]  # cast to int since divisions always return floats in python3
+    mid = int(len(L) / 2) - 1
+    return (L[mid] + L[mid+1]) / 2.0
+
+
+def unscaled_upper_mad(xs):
+    """Return a tuple consisting of the median of xs followed by the
+    unscaled median absolute deviation of the values in xs that lie
+    above the median.
+    """
+    xs.sort()
+    med = median(xs)
+    umad = median([x - med for x in xs if x > med])
+    return med, umad
+
+
+def mean_std(L):
+    s = sum(L)
+    mean = np.median(L)
+    sq_sum = 0.0
+    for v in L:
+        sq_sum += (v - mean)**2.0
+    var = sq_sum / float(len(L))
+    return mean, var**0.5
+
+
+def get_insert_params(L, mads=8):
+    c = len(L)
+    med, umad = unscaled_upper_mad(L)
+    upper_cutoff = int(min(med + mads * umad, 10000))
+    L = [v for v in L if v < upper_cutoff]
+    new_len = len(L)
+    removed = c - new_len
+    mean, stdev = mean_std(L)
+    mean = int(mean)
+    stdev = int(stdev)
+    logging.info(f"dodi insert size {mean} +/- {stdev}. {removed} outliers with insert size >= {upper_cutoff}")
+    return mean, stdev
+
+
+def insert_size(batch):
+
+    cdef int required = 97
+    restricted = 3484
+    cdef int flag_mask = required | restricted
+
+    tlens = []
+    for b in batch:
+        for aln, _ in b['inputdata']:
+            flag = int(aln[1])
+            if not flag & 2:
+                continue
+            tlen = int(aln[8])
+            rname = aln[2]
+            rnext = aln[6]
+            if rnext == '=':
+                rnext = rname
+            if rname == rnext and flag & flag_mask == required and tlen >= 0:
+                tlens.append(tlen)
+
+    if len(tlens) > 0:
+        insert_m, insert_stdev = get_insert_params(tlens)
+    else:
+        logging.info("dodi insert size, not enough pairs, using 350 +/- 200")
+        insert_m, insert_stdev = 350, 200
+    return insert_m, insert_stdev
+
+
 def process_reads(args):
     t0 = time.time()
 
-    click.echo("dodi reading data from {}".format(args["sam"]), err=True)
     insert_std = args["template_size"].split(",")
     args["insert_median"] = float(insert_std[0])
     args["insert_stdev"] = float(insert_std[1])
@@ -129,13 +206,11 @@ def process_reads(args):
     if not args["include"]:
         args["bias"] = 1.0
     else:
-        click.echo("Elevating alignments in --include with --bias {}".format(args["bias"]), err=True)
+        logging.info("Elevating alignments in --include with --bias {}".format(args["bias"]))
 
     if args["output"] in {"-", "stdout"} or args["output"] is None:
-        click.echo("Writing alignments to stdout", err=True)
         outsam = sys.stdout
     else:
-        click.echo("Writing alignments to {}".format(args["output"]), err=True)
         outsam = open(args["output"], "w")
 
     if (args["fq1"] or args["fq2"]) and args["procs"] > 1:
@@ -144,8 +219,6 @@ def process_reads(args):
     map_q_recal_model = None  # load_mq_model(args["mq"])
 
     count = 0
-
-    click.echo("dodi {} process".format(args["procs"]), err=True)
 
     version = pkg_resources.require("dodi")[0].version
     itr = io_funcs.iterate_mappings(args, version)
@@ -157,59 +230,103 @@ def process_reads(args):
     paired_end = int(args["paired"] == "True")
     bias = args["bias"]
     replace_hard = int(args["replace_hardclips"] == "True")
+    secondary = args['secondary'] == 'True'
 
-    max_d = args["insert_median"] + 4*args["insert_stdev"]  # Separation distance threshold to call a pair discordant
+    default_max_d = args["insert_median"] + 4*args["insert_stdev"]  # Separation distance threshold to call a pair discordant
 
-    if args["procs"] != 1:
+    # if args["procs"] != 1:
+    #
+    #     header_string = next(itr)
+    #     outsam.write(header_string)
+    #
+    #     temp = []
+    #     for rows, last_seen_chrom, fq in itr:
+    #         temp.append((rows, max_d, last_seen_chrom, fq, pairing_params, paired_end, isize,
+    #                                      match_score, bias, replace_hard))
+    #
+    #         if len(temp) > 10000:
+    #             with multiprocessing.Pool(args["procs"]) as p:
+    #                 res = p.map(job, temp)
+    #
+    #             res = [item for sublist in res for item in sublist if item]  # Remove [] and flatten list
+    #             write_records(res, map_q_recal_model, outsam)
+    #             temp = []
+    #
+    #     if len(temp) > 0:
+    #
+    #         with multiprocessing.Pool(args["procs"]) as p:
+    #             res = p.map(job, temp)
+    #         res = [item for sublist in res for item in sublist if item]
+    #         write_records(res, map_q_recal_model, outsam)
 
-        header_string = next(itr)
-        outsam.write(header_string)
+    # Use single process
 
-        temp = []
-        for rows, last_seen_chrom, fq in itr:
-            temp.append((rows, max_d, last_seen_chrom, fq, pairing_params, paired_end, isize,
-                                         match_score, bias, replace_hard))
+    find_insert_size = True
+    if args['paired'] == 'False':
+        find_insert_size = False
 
-            if len(temp) > 10000:
-                with multiprocessing.Pool(args["procs"]) as p:
-                    res = p.map(job, temp)
-
-                res = [item for sublist in res for item in sublist if item]  # Remove [] and flatten list
-                write_records(res, map_q_recal_model, outsam)
-                temp = []
-
-        if len(temp) > 0:
-
-            with multiprocessing.Pool(args["procs"]) as p:
-                res = p.map(job, temp)
-            res = [item for sublist in res for item in sublist if item]
-            write_records(res, map_q_recal_model, outsam)
-
-    # Use single process for debugging
-    else:
+    if True:
 
         header_string = next(itr)
         outsam.write(header_string)
 
         sam_temp = []
+
+        batch = []
         for rows, last_seen_chrom, fq in itr:
 
             count += 1
 
             # rows, max_d, last_seen_chrom, fq
-            temp = io_funcs.make_template(rows, max_d, last_seen_chrom, fq, pairing_params, paired_end, isize,
-                                         match_score, bias, replace_hard)
+            temp = io_funcs.make_template(rows, default_max_d, last_seen_chrom, fq, pairing_params, paired_end, isize,
+                                         match_score, bias, replace_hard, secondary)
 
-            process_template(temp)
+            if len(batch) < 100e3:
+                batch.append(temp)
 
-            if temp['passed']:
-                sam = to_output(temp)
-                if sam:
-                    sam_temp.append((temp["name"], sam))
+            else:
+                max_d = default_max_d
+                if find_insert_size:
+                    insert, insert_std = insert_size(batch)
+                    max_d = insert + (4 * insert_std)
 
-                if len(sam_temp) > 50000:
-                    write_records(sam_temp, map_q_recal_model, outsam)
-                    sam_temp = []
+                for temp in batch:
+
+                    if max_d != default_max_d:
+                        temp['max_d'] = max_d
+
+                    process_template(temp)
+
+                    if temp['passed']:
+                        sam = to_output(temp)
+                        if sam:
+                            sam_temp.append((temp["name"], sam))
+
+                        if len(sam_temp) > 50000:
+                            write_records(sam_temp, map_q_recal_model, outsam)
+                            sam_temp = []
+                batch = []
+
+
+        if len(batch) > 0:
+
+            max_d = default_max_d
+            if find_insert_size:
+                insert, insert_std = insert_size(batch)
+                max_d = insert + (4 * insert_std)
+
+            for temp in batch:
+
+                if max_d != default_max_d:
+                    temp['max_d'] = max_d
+
+                process_template(temp)
+
+                if temp['passed']:
+                    sam = to_output(temp)
+                    if sam:
+                        sam_temp.append((temp["name"], sam))
+            batch = []
 
         if len(sam_temp) > 0:
             write_records(sam_temp, map_q_recal_model, outsam)
@@ -217,6 +334,5 @@ def process_reads(args):
     if args["output"] != "-" or args["output"] is not None:
         outsam.close()
 
-    click.echo("dodi {} completed in {} h:m:s".format(args["sam"],
-                                                            str(datetime.timedelta(seconds=int(time.time() - t0)))),
-               err=True)
+    logging.info("dodi completed in {} h:m:s".format(str(datetime.timedelta(seconds=int(time.time() - t0)))),
+               )

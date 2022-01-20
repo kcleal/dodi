@@ -10,13 +10,18 @@ from collections import defaultdict
 import os
 import click
 import ncls
-
+from sys import stderr, stdin
+import logging
 
 DTYPE = np.float
 ctypedef np.float_t DTYPE_t
 
 from libc.stdlib cimport malloc
 import re
+
+
+def echo(*arg):
+    click.echo(arg, err=True)
 
 
 def mk_dest(d):
@@ -28,7 +33,7 @@ def mk_dest(d):
 
 
 cpdef dict make_template(rows, max_d, last_seen_chrom, fq, pairing_params, paired_end, isize, match_score, bias,
-                         replace_hard):
+                         replace_hard, secondary):
     # Make a pickle-able data object for multiprocessing
     return {"isize": isize,
             "max_d": max_d,
@@ -57,7 +62,8 @@ cpdef dict make_template(rows, max_d, last_seen_chrom, fq, pairing_params, paire
             "fq_read1_q": 0,
             "fq_read2_q": 0,
             "read1_unmapped": 0,
-            "read2_unmapped": 0
+            "read2_unmapped": 0,
+            "secondary": secondary
             }
 
 
@@ -85,7 +91,7 @@ def get_include_reads(include_regions, bam):
 
     regions = [i.strip().split("\t")[:3] for i in open(include_regions, "r") if i[0] != "#"]
     for c, s, e in regions:
-        click.echo("Reading {}:{}-{}".format(c, s, e), err=True)
+        logging.info("Reading {}:{}-{}".format(c, s, e))
         for r in bam.fetch(c, int(s), int(e)):
             yield r
 
@@ -107,7 +113,7 @@ def sam_itr(args):
             header_string += t
             continue
 
-        first_line = t.split("\t", 4)
+        first_line = t.split("\t", 9)  # 4 was old split, 9 to tlen
         last_seen_chrom = first_line[2]
 
         yield header_string
@@ -124,7 +130,7 @@ def sam_itr(args):
 
     for t in itr:
         # t = str(t.decode("ascii"))
-        line = t.split("\t", 4)
+        line = t.split("\t", 9)
 
         if line[3] != last_seen_chrom:
             last_seen_chrom = line[2]
@@ -197,7 +203,7 @@ def iterate_mappings(args, version):
     'ins_cost', 'ol_cost', 'inter_cost', 'u', 'match_score', 'bias', 'replace_hardclips', 'fq1', 'fq2',
      'insert_median', 'insert_stdev', 'mq', 'max_tlen', 'template_size'}
     cp_args = {k: v for k, v in args.items() if k in params}
-    click.echo(f"ins-cost={args['ins_cost']}, ol-cost={args['ol_cost']}, inter-cost={args['inter_cost']}", err=True)
+
     arg_str = ", ".join(["{}={}".format(i, j) for i, j in args.items() if i in params])
     inputstream = sam_itr(args)
 
@@ -237,7 +243,7 @@ def iterate_mappings(args, version):
         fq = fq_getter(fq_iter, name, args, fq_buffer)
         yield rows, last_seen_chrom, fq
 
-    click.echo("Total processed " + str(total), err=True)
+    logging.info(f"dodi processed {total} reads")
 
 
 
@@ -272,15 +278,19 @@ cpdef tuple get_start_end(str cigar):
     c = re.split(r'(\d+)', cigar)[1:]  # Drop leading empty string
     cdef int end = 0
     cdef int start = 0
+    cdef int template_length = 0
     cdef int i
 
     for i in range(0, len(c)-1, 2):
+        ci = int(c[i])
         if i == 0 and (c[i+1] == "S" or c[i+1] == "H"):
-            start += int(c[i])
-            end += int(c[i])
+            start += ci
+            end += ci
         elif c[i+1] not in "DHS":  # Don't count deletions, or soft/hard clips at right-hand side
-            end += int(c[i])
-    return start, end
+            end += ci
+        if c[i+1] != "D":
+            template_length += ci
+    return start, end, template_length
 
 
 cpdef int get_align_end_offset(str cigar):
@@ -360,7 +370,9 @@ def sort_func(row):
 cpdef sam_to_array(template):
     # Expect read1 and read2 alignments to be concatenated, not mixed together
     data, overlaps = list(zip(*template["inputdata"]))
-    template["inputdata"] = [[i[1], i[2], i[3]] + i[4].strip().split("\t") for i in data]
+    # template["inputdata"] = [[i[1], i[2], i[3]] + i[4].strip().split("\t") for i in data]
+    # split the rest of the columns
+    template["inputdata"] = [i[1:-1] + i[-1].strip().split("\t") for i in data]
 
     # If only one alignment for read1 and read2, no need to try pairing, just send sam to output
     if template["paired_end"] and len(data) == 2:
@@ -431,6 +443,7 @@ cpdef sam_to_array(template):
                         template["read2_unmapped"] = 1
 
         tags = [i.split(":") for i in l[11:]]
+
         seq_len = len(l[8])
 
         for k, t, v in tags:
@@ -478,7 +491,7 @@ cpdef sam_to_array(template):
             srt_1.append(query_start)
 
         else:
-            query_start, query_end = get_start_end(cigar)
+            query_start, query_end, template_length = get_start_end(cigar)
             srt_1.append(query_start)
 
             # If current alignment it not primary, and on different strand from primary, count from other end
@@ -494,11 +507,16 @@ cpdef sam_to_array(template):
                     query_start = start_temp
 
             if not template["paired_end"]:
+
+                if template['read1_length'] == 0:
+                    template['read1_length'] = template_length
+                    if template_length == 0:
+                        raise ValueError('Could not infer template length')
+
                 if flag & 16:  # Single end Reverse strand, count from end
                     start_temp = template["read1_length"] - query_end
                     query_end = start_temp + query_end - query_start
                     query_start = start_temp
-
 
         arr[idx, 2] = query_start
         arr[idx, 3] = query_end  # query_start + query_end
@@ -543,60 +561,52 @@ cpdef sam_to_array(template):
 cpdef choose_supplementary(dict template):
     # Final alignments have been chosen, but need to decide which is supplementary
     cdef int j = 0
-    template['ri'] = dict(zip(template['data'][:, 5], range(len(template['data']))))  # Map of row_index and array index
-    cdef np.ndarray[long, ndim=1] actual_rows
-    try:
-        actual_rows = np.array([template['ri'][j] for j in template['rows']]).astype(int)
-    except:
-        click.echo(template["ri"], err=True)
-        click.echo(template["rows"], err=True)
-        click.echo(template["inputdata"], err=True)
-        click.echo((template["read1_unmapped"], template["read2_unmapped"]), err=True)
-        quit()
-    cdef np.ndarray[double, ndim=2] d = template['data']  #[actual_rows, :]  # np.float_t is double
 
     cdef double read1_max = 0
     cdef double read2_max = 0
     cdef int i = 0
 
-    for j in range(len(actual_rows)):
-        i = actual_rows[j]
-        if d[i, 7] == 1 and d[i, 9] > read1_max:  # Use original alignment score, not biased
-            read1_max = d[i, 9]
+    for r in template['rows']:
+        if r[7] == 1 and r[9] > read1_max:  # Use original alignment score, not biased
+            read1_max = r[9]
 
-        elif d[i, 7] == 2 and d[i, 9] > read2_max:
-            read2_max = d[i, 9]
+        elif r[7] == 2 and r[9] > read2_max:
+            read2_max = r[9]
 
     ids_to_name = {v: k for k, v in template["chrom_ids"].items()}
 
     locs = []
     cdef double m = 0
-    for j in range(len(actual_rows)):
-        i = actual_rows[j]
 
-        loc = "{}-{}-{}-{}".format(ids_to_name[int(d[i, 0])], int(d[i, 1]), int(d[i, 6]), int(d[i, 7]) )
+    for r in template['rows']:
+
+        loc = "{}-{}-{}-{}".format(ids_to_name[int(r[0])], int(r[1]), int(r[6]), int(r[7]) )
         locs.append(loc)
 
         if loc not in template['score_mat']:
                 template['score_mat'][loc] = []
         # Values are popped when setting supplementary; prevents bug where read contains two identical aligns
-        if d[i, 7] == 1:
+        if r[7] == 1:
             m = read1_max
         else:
             m = read2_max
 
-        if d[i, 9] == m:  # Primary, next best s
+        if r[9] == m:  # Primary, next best s
             template['score_mat'][loc] += [True, 0]
         else:
             template['score_mat'][loc] += [False, 0]
     template['locs'] = locs
 
 
-cpdef void score_alignments(dict template, ri, np.ndarray[np.int64_t, ndim=1]  template_rows, np.ndarray[DTYPE_t, ndim=2] template_data):
+cpdef void score_alignments(dict template, # ri,
+                            template_rows,
+                            template_data,
+                            ):
     # Scans all alignments for each query, slow for long reads but ok for short read data
+    # the goal is to try and keep extra supplementary alignments that are not on the main alignment path
     # Used for DN, similar to XS
     all_xs = []
-    cdef int i, actual_row, item, idx
+    cdef int i, actual_row, idx
     cdef float xs = -1
     cdef float size = 0
     cdef float qstart = 0
@@ -611,8 +621,12 @@ cpdef void score_alignments(dict template, ri, np.ndarray[np.int64_t, ndim=1]  t
 
     idx = 0
     for item in template_rows:
-        actual_row = ri[item]
-        qstart, qend, readn, ori_aln_score = template_data[actual_row, [2, 3, 7, 9]]
+        actual_row = item[5]
+        #qstart, qend, readn, ori_aln_score = template_data[actual_row, [2, 3, 7, 9]]
+        qstart = item[2]
+        qend = item[3]
+        readn = item[7]
+        ori_aln_score = item[9]
         size = qend - qstart
 
         if template["paired_end"]:
@@ -640,7 +654,7 @@ cpdef void score_alignments(dict template, ri, np.ndarray[np.int64_t, ndim=1]  t
         idx += 1
 
 
-def add_scores(template, np.ndarray[np.float_t, ndim=1] rows, float path_score, float second_best, float dis_to_normal, int norm_pairings):
+def add_scores(template, rows, float path_score, float second_best, float dis_to_normal, int norm_pairings):
 
     # The rows correspond to the indexes of the input array, not the original ordering of the data
     template['rows'] = rows.astype(int)  # list(map(int, rows))

@@ -10,6 +10,7 @@ from __future__ import absolute_import
 import click
 import array
 from cpython cimport array
+from sys import stderr
 import numpy as np
 cimport numpy as np
 from libc.math cimport exp, log, sqrt, fabs
@@ -80,7 +81,7 @@ cdef float bwa_pair_score(float d, float mu, float sigma, float match_score, flo
     else:
         return u
 
-cdef tuple optimal_path(np.ndarray[DTYPE_t, ndim=2] segments,
+cdef tuple optimal_path(double[:, :] segments, # np.ndarray[DTYPE_t, ndim=2] segments,
                         float contig_length,
                         float mu,
                         float sigma,
@@ -114,33 +115,48 @@ cdef tuple optimal_path(np.ndarray[DTYPE_t, ndim=2] segments,
     # Choose the best score out of the in edges.
     # Use a special start and end node to score the first and last alignments
 
-    cdef np.ndarray[np.int_t, ndim=1] pred = np.zeros(segments.shape[0], dtype=np.int)
-    cdef np.ndarray[np.float_t, ndim=1] node_scores = np.zeros(segments.shape[0], dtype=np.float)
+    # cdef np.ndarray[np.int_t, ndim=1] pred = np.zeros(segments.shape[0], dtype=np.int)
+    # cdef np.ndarray[np.float_t, ndim=1] node_scores = np.zeros(segments.shape[0], dtype=np.float)
     # Next best node score, for finding the secondary path
-    cdef np.ndarray[np.float_t, ndim=1] nb_node_scores = np.zeros(segments.shape[0], dtype=np.float)
+    # cdef np.ndarray[np.float_t, ndim=1] nb_node_scores = np.zeros(segments.shape[0], dtype=np.float)
+
+    cdef long[:] pred = np.zeros(segments.shape[0], dtype=np.int)
+    cdef double[:] node_scores = np.zeros(segments.shape[0], dtype=np.float)
+    # Next best node score, for finding the secondary path
+    cdef double[:] nb_node_scores = np.zeros(segments.shape[0], dtype=np.float)
+
 
     normal_jumps = set([])  # Keep track of which alignments form 'normal' pairs between read-pairs
 
     cdef int i, j, p, normal_end_index, proper_pair # FR,
-    cdef float chr1, pos1, start1, end1, score1, row_index1, strand1, r1,\
+    cdef double chr1, pos1, start1, end1, score1, row_index1, strand1, r1,\
                chr2, pos2, start2, end2, score2, row_index2, strand2, r2, \
                micro_h, ins, best_score, next_best_score, best_normal_orientation, current_score, total_cost,\
                S, sc, max_s, path_score, jump_cost, distance
 
     # Deal with first score
     for i in range(segments.shape[0]):
-        node_scores[i] = segments[i, 4] - (segments[i, 2] * ins_cost)
+        node_scores[i] = segments[i, 4] #segments[i, 4] - (segments[i, 2] * ins_cost)
 
-    pred.fill(-1)
-    nb_node_scores.fill(-1e6)  # Must set to large negative, otherwise a value of zero can imply a path to that node
+    for i in range(len(pred)):
+        pred[i] = -1
+    # pred.fill(-1)
+
+    for i in range(len(nb_node_scores)):
+        nb_node_scores[i] = -1e6
+    # nb_node_scores.fill(-1e6)  # Must set to large negative, otherwise a value of zero can imply a path to that node
 
     best_score = 0  # Declare here in case only 1 alignment
     next_best_score = 0
     best_normal_orientation = 0  # Keep track of the best normal pairing score, F first R second
     normal_end_index = -1  # Keep track of the last normal-index for updating the normal-score later on
 
+    # click.echo(segments[2:6, :].astype(int), err=True)
+    # quit()
+
     # start from segment two because the first has been scored
     for i in range(1, segments.shape[0]):
+
         chr1 = segments[i, 0]
         pos1 = segments[i, 1]
         start1 = segments[i, 2]
@@ -167,7 +183,8 @@ cdef tuple optimal_path(np.ndarray[DTYPE_t, ndim=2] segments,
             r2 = segments[j, 7]
 
             # Allow alignments with minimum sequence and max overlap
-            if start1 > end2 - max_homology and end1 > end2 + min_aln and start1 - start2 > min_aln:
+            if start1 > max(end2 - max_homology, start2) and end1 > end2 + min_aln and start1 - start2 > min_aln:
+            # if start1 > end2 - max_homology and end1 > end2 + min_aln and start1 - start2 > min_aln:
 
                 if start1 > end2 and start1 - end2 > max_insertion:
                     continue
@@ -208,6 +225,7 @@ cdef tuple optimal_path(np.ndarray[DTYPE_t, ndim=2] segments,
 
                 # Update best score and next best score
                 if current_score > best_score:
+
                     next_best_score = best_score
                     best_score = current_score
 
@@ -233,9 +251,9 @@ cdef tuple optimal_path(np.ndarray[DTYPE_t, ndim=2] segments,
     cdef float cst = 0
     path_score = -(contig_length * ins_cost)  # Worst case
     secondary = float(path_score)
-    end_i = -1
-    for i in range(segments.shape[0]):
+    cdef int end_i = -1
 
+    for i in range(segments.shape[0]):
         node_to_end_cost = node_scores[i] - (ins_cost * (contig_length - segments[i, 3]))
         node_scores[i] = node_to_end_cost  # Need to know for secondary path
         if node_to_end_cost > path_score:
@@ -289,7 +307,10 @@ cdef tuple optimal_path(np.ndarray[DTYPE_t, ndim=2] segments,
     if best_normal_orientation < 0:
         best_normal_orientation = 0
     # Return the index column
-    return segments[a, 5], path_score, secondary, best_normal_orientation, normal_pairings
+
+    segs = np.array([np.asarray(segments[i]) for i in a])  # segments[a, 5]
+
+    return segs, path_score, secondary, best_normal_orientation, normal_pairings
 
 
 cpdef tuple process(dict rt):
@@ -315,12 +336,12 @@ cpdef tuple process(dict rt):
     cdef float U = pp[6]
     cdef float match_score = rt["match_score"]
 
-    cdef np.ndarray[DTYPE_t, ndim=2] read1_arr, read2_arr, t, t2
+    # cdef np.float[:, :] read1_arr, read2_arr, t, t2
 
     cdef float mu, sigma
     mu, sigma = rt['isize']
 
-    t = rt['data'][:, 0:8]
+    t = rt['data'] #[:, 0:8]
 
     if not rt["paired_end"]:
 
@@ -329,8 +350,11 @@ cpdef tuple process(dict rt):
 
         single_end = 1
         contig_l = r1_len
-        return optimal_path(t, contig_l, mu, sigma, max_insertion, min_aln, max_homology, ins_cost,
+
+        op = optimal_path(t, contig_l, mu, sigma, max_insertion, min_aln, max_homology, ins_cost,
                             hom_cost, inter_cost, U, match_score)
+
+        return op
 
     else:
         if (r1_len is None and r2_len is None) or (rt["read1_unmapped"] and rt["read2_unmapped"]):
@@ -349,7 +373,7 @@ cpdef tuple process(dict rt):
                                                                                           hom_cost, inter_cost, U,
                                                                                           match_score)
 
-            path1 = np.array(list(path1) + [rt['first_read2_index']]).astype(np.float)
+            # path1 = np.array(list(path1) + [rt['first_read2_index']]).astype(np.float)
             return path1, length1, second_best1, dis_to_normal1, norm_pairings1
 
 
@@ -367,7 +391,7 @@ cpdef tuple process(dict rt):
                                                                                           match_score)
 
             first_i = rt['first_read2_index']
-            path2 = np.array([0] + list(path2)).astype(np.float)
+            # path2 = np.array([0] + list(path2)).astype(np.float)
             return path2, length2, second_best2, dis_to_normal2, norm_pairings2
 
         else:

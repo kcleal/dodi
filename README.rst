@@ -2,8 +2,8 @@
 dodi
 ====
 
-dodi facilitates mapping of amplicon reads to target genomic regions
-
+dodi chooses an optimal set of alignments from a candidate list. This can be used for
+improving split-read mapping, or for selectively mapping to target regions of the genome
 
 Installation
 ------------
@@ -27,13 +27,10 @@ Python packages needed are listed in requirements.txt.
 Usage
 -----
 Given a list of candidate alignments in `.sam` format, `dodi` will select an optimal spanning set of
-alignments. Common usage is to run `dodi` in a pipe, downstream of a mapper such as bwa mem::
-
-    $ your-mapper | dodi > output.sam   # Choose paired-end or single read alignments from sam input
-
+alignments. Common usage is to run `dodi` in a pipe, downstream of a mapper such as bwa mem or Last.
 
 To use with bwa mem, make sure the `-a` flag is used, to report all alignments::
 
-    $ bwa mem -a -t8 ref.fa read1.fq read2.fq | dodi > output_alignments.sam
+    $ bwa mem -a -t8 ref.fa read1.fq read2.fq | dodi - > output_alignments.sam
 
 

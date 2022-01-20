@@ -40,7 +40,7 @@ def get_extra_args():
     compiler = ccompiler.new_compiler()
     extra_compile_args = []
 
-    flags = ['-std=c++17', '-std=c++14', '-std=c++11']
+    flags = ['-std=c++20', '-std=c++17', '-std=c++14', '-std=c++11']
 
     f = cpp_flag(compiler, flags)
     if not f:
@@ -75,7 +75,7 @@ for item in ["io_funcs", "input_stream_alignments", "pairing", "samclips"]:
 print("Found packages", find_packages(where="."))
 setup(
     name="dodi",
-    version='0.2.0',
+    version='0.3.0',
     python_requires='>=3.7',
     install_requires=[
             'cython',
