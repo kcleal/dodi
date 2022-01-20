@@ -33,4 +33,13 @@ To use with bwa mem, make sure the `-a` flag is used, to report all alignments::
 
     $ bwa mem -a -t8 ref.fa read1.fq read2.fq | dodi - > output_alignments.sam
 
+To selectively map to target regions of the genome, supply dodi with a .bed file containing the
+target regions, and a `--bias` value (default is 1.15). Alignments falling within target
+regions receive a temporary bias to their alignment scores, meaning those alignments are
+more likely to be chosen by dodi::
+
+    $ bwa mem -a -t8 ref.fa read1.fq read2.fq | dodi --include target_regions.bed - > output_alignments.sam
+
+
+For long-read mapping, a lower --bias value is recommended, e.g. 1.01
 
