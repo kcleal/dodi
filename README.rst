@@ -38,7 +38,8 @@ target regions, and a `--bias` value (default is 1.15). Alignments falling withi
 regions receive a temporary bias to their alignment scores, meaning those alignments are
 more likely to be chosen by dodi::
 
-    $ bwa mem -a -t8 ref.fa read1.fq read2.fq | dodi --include target_regions.bed - > output_alignments.sam
+    $ bwa mem -a -t8 ref.fa read1.fq read2.fq | \
+            dodi --include target_regions.bed - > output_alignments.sam
 
 
 For long-read mapping, a lower --bias value is recommended, e.g. 1.01
