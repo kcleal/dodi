@@ -1,3 +1,5 @@
+# cython: profile=True
+
 import click
 from multiprocessing import cpu_count
 import pkg_resources
@@ -7,6 +9,7 @@ from . import input_stream_alignments
 from sys import stderr
 import logging
 import sys
+import cython
 
 
 logFormatter = logging.Formatter("%(asctime)s [%(levelname)-7.7s]  %(message)s")

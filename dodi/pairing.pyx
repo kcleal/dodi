@@ -1,4 +1,5 @@
 #cython: language_level=3, boundscheck=False, wraparound=False
+# cython: profile=True
 #distutils: language=c++
 
 """
@@ -151,8 +152,6 @@ cdef tuple optimal_path(double[:, :] segments, # np.ndarray[DTYPE_t, ndim=2] seg
     best_normal_orientation = 0  # Keep track of the best normal pairing score, F first R second
     normal_end_index = -1  # Keep track of the last normal-index for updating the normal-score later on
 
-    # click.echo(segments[2:6, :].astype(int), err=True)
-    # quit()
 
     # start from segment two because the first has been scored
     for i in range(1, segments.shape[0]):
@@ -184,7 +183,6 @@ cdef tuple optimal_path(double[:, :] segments, # np.ndarray[DTYPE_t, ndim=2] seg
 
             # Allow alignments with minimum sequence and max overlap
             if start1 > max(end2 - max_homology, start2) and end1 > end2 + min_aln and start1 - start2 > min_aln:
-            # if start1 > end2 - max_homology and end1 > end2 + min_aln and start1 - start2 > min_aln:
 
                 if start1 > end2 and start1 - end2 > max_insertion:
                     continue
@@ -192,7 +190,7 @@ cdef tuple optimal_path(double[:, :] segments, # np.ndarray[DTYPE_t, ndim=2] seg
                 # Microhomology and insertion lengths between alignments on same read only
                 micro_h = 0
                 ins = 0
-                #if r1 == r2:
+
                 micro_h = end2 - start1
                 if micro_h < 0:
                     ins = fabs(micro_h)
@@ -298,7 +296,7 @@ cdef tuple optimal_path(double[:, :] segments, # np.ndarray[DTYPE_t, ndim=2] seg
 
     cdef np.ndarray[np.int_t, ndim=1] a = np.empty(len(v), dtype=np.int)
     for i in range(<int>v.size()):
-        a[v.size() - 1 - i] = v[i]  # Virtual reversal of the indexes array
+        a[v.size() - 1 - i] = <int>segments[v[i], 5]  # Virtual reversal of the indexes array
 
     if secondary < 0:
         secondary = 0
@@ -308,9 +306,13 @@ cdef tuple optimal_path(double[:, :] segments, # np.ndarray[DTYPE_t, ndim=2] seg
         best_normal_orientation = 0
     # Return the index column
 
-    segs = np.array([np.asarray(segments[i]) for i in a])  # segments[a, 5]
+    # return the row_index
+    # segs = np.empty_like(a)
+    # for i in range(len(a)):
+    #     segs[i] = segments[a[i], 5]
+    #segs = np.array([np.asarray(segments[i]) for i in a])  # segments[a, 5]
 
-    return segs, path_score, secondary, best_normal_orientation, normal_pairings
+    return a, path_score, secondary, best_normal_orientation, normal_pairings
 
 
 cpdef tuple process(dict rt):
@@ -341,7 +343,7 @@ cpdef tuple process(dict rt):
     cdef float mu, sigma
     mu, sigma = rt['isize']
 
-    t = rt['data'] #[:, 0:8]
+    t = rt['data']
 
     if not rt["paired_end"]:
 

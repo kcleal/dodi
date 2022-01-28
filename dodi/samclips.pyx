@@ -1,4 +1,5 @@
 #cython: language_level=3
+# cython: profile=True
 
 """
 Utils to generate proper sam output and flag information
@@ -194,10 +195,12 @@ cdef set_mate_flag(a, b, max_d, read1_rev, read2_rev):
     if not (apos == "-1" or bpos == "-1"):
 
         if arname == brname:
-            # Set TLEN
+
             p1, p2 = int(apos), int(bpos)
 
             # Set proper-pair flag
+            # echo(aflag, bflag, p1, p2)
+            # echo((p1 < p2, (not aflag & 16), (bflag & 16)), (p2 <= p1, (not bflag & 16), (aflag & 16)))
             if (aflag & 16 and not bflag & 16) or (not aflag & 16 and bflag & 16):  # Not on same strand
 
                 if abs(p1 - p2) < max_d:
@@ -211,7 +214,6 @@ cdef set_mate_flag(a, b, max_d, read1_rev, read2_rev):
                         if aflag & 16 and not bflag & 32:
                             # Mate-reverse strand not set
                             bflag = set_bit(bflag, 5, 1)
-                            # reverse_B = True
 
                         if not aflag & 16 and bflag & 32:
                             # Mate-reverse should'nt be set
@@ -221,7 +223,6 @@ cdef set_mate_flag(a, b, max_d, read1_rev, read2_rev):
                         if bflag & 16 and not aflag & 32:
                             # Mate-reverse strand not set
                             aflag = set_bit(aflag, 5, 1)
-                            # reverse_A = True
 
                         if not bflag & 16 and aflag & 32:
                             # Mate-revsere should'nt be set
@@ -509,7 +510,10 @@ cdef list replace_mc_tags(alns):
 
 cpdef list fixsam(dict template):
 
-    sam = [template['inputdata'][i[5]] for i in template['rows']]  # Get chosen rows
+    cdef int j, row_idx
+    # sam = [template['inputdata'][i[5]] for i in template['rows']]  # Get chosen rows
+
+    sam = [template['inputdata'][j] for j in template['rows']]
 
     max_d = template['max_d']
 
@@ -522,22 +526,47 @@ cpdef list fixsam(dict template):
     rev_A = False
     rev_B = False
 
-    for l in sam:
+    inputdata = template['inputdata']
+    tabledata = template['data_ori']
+
+    primary1_idx = template['primary1']
+    primary2_idx = template['primary2']
+
+    # echo(template['name'])
+    # echo(sam)
+    # echo(template['rows'])
+    # echo(template['inputdata'])
+
+    # for l in sam:
+    #
+    # if template['name'] == 'chr1_0_0:108410337-108410395.106942890-106942983|N-N.106943646.106943797':
+    #     echo(primary1_idx, primary2_idx)
+    #     echo(template['rows'])
+    #     echo(inputdata)
+    #     quit()
+
+    # strip_tags = {'ZA', 'ZP', 'ZN', 'ZS', 'ZM', 'ZO'}
+
+    for row_idx in template['rows']:
+
+        l = inputdata[row_idx]
 
         l[0] = int(l[0])  # Convert flag to int
 
         strand = "-1" if l[0] & 16 else "1"
         rid = str(2 if l[0] & 128 else 1)
-        key = f"{l[1]}-{l[2]}-{strand}-{rid}"
 
-        if len(score_mat[key]) > 2:
-            # Prevent bug where two identical alignments possible
-            aln_info_0, aln_info_1 = score_mat[key].pop(0), score_mat[key].pop(0)  # Remove first two items from list
-        else:
-            aln_info_0, aln_info_1 = score_mat[key]
+        # key = f"{l[1]}-{l[2]}-{strand}-{rid}"
+        #
+        # if len(score_mat[key]) > 2:
+        #     # Prevent bug where two identical alignments possible
+        #     aln_info_0, aln_info_1 = score_mat[key].pop(0), score_mat[key].pop(0)  # Remove first two items from list
+        # else:
+        #     aln_info_0, aln_info_1 = score_mat[key]
 
-        xs = int(aln_info_1)
-
+        # xs = int(aln_info_1)
+        xs = int(tabledata[row_idx, 4])  # the biased alignment score
+        # echo(l)
         if l[0] & 2048:
             os = "ZO:i:1"  # refers to "originally supplementary"
         else:
@@ -554,11 +583,15 @@ cpdef list fixsam(dict template):
         if round(score_mat["path_score"], 2) < 0:
             echo('ERROR path socre < 0', template['name'], l)
 
-        if aln_info_0:
-            if rid == "1":
-                primary1 = l
-            else:
-                primary2 = l
+        if row_idx == primary1_idx:
+            primary1 = l
+        elif row_idx == primary2_idx:
+            primary2 = l
+        # if aln_info_0:
+        #     if rid == "1":
+        #         primary1 = l
+        #     else:
+        #         primary2 = l
         else:
             out.append(['sup', l, False])  # Supplementary, False to decide if rev comp
 

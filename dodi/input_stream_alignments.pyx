@@ -1,4 +1,5 @@
 #cython: language_level=3
+# cython: profile=True
 
 from __future__ import absolute_import
 import multiprocessing
@@ -42,7 +43,7 @@ cdef void process_template(read_template):
         io_funcs.add_scores(read_template, *res)
         io_funcs.choose_supplementary(read_template)
         if read_template['secondary']:
-            io_funcs.score_alignments(read_template, read_template['rows'], read_template['data'])
+            io_funcs.score_alignments(read_template)
 
 
 cpdef list to_output(dict template):
@@ -127,6 +128,10 @@ cpdef list job(data_tuple):
 
 def median(L):
     # Stolen from https://github.com/arq5x/lumpy-sv/blob/master/scripts/pairend_distro.py
+    if len(L) == 0:
+        return 500
+    elif len(L) == 1:
+        return L[0]
     if len(L) % 2 == 1:
         return L[int(len(L)/2)]  # cast to int since divisions always return floats in python3
     mid = int(len(L) / 2) - 1
@@ -164,7 +169,7 @@ def get_insert_params(L, mads=8):
     mean, stdev = mean_std(L)
     mean = int(mean)
     stdev = int(stdev)
-    logging.info(f"dodi insert size {mean} +/- {stdev}. {removed} outliers with insert size >= {upper_cutoff}")
+    logging.info(f"dodi insert size {mean} +/- {stdev}")
     return mean, stdev
 
 

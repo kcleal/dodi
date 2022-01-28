@@ -1,5 +1,6 @@
 #!python
 #cython: language_level=2, boundscheck=False
+# cython: profile=True
 #distutils: language=c++
 
 # Language level 2 is needed for char map
@@ -242,9 +243,6 @@ def iterate_mappings(args, version):
         total += 1
         fq = fq_getter(fq_iter, name, args, fq_buffer)
         yield rows, last_seen_chrom, fq
-
-    logging.info(f"dodi processed {total} reads")
-
 
 
 cdef char *basemap = [ '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
@@ -549,6 +547,7 @@ cpdef sam_to_array(template):
 
     template["first_read2_index"] = first_read2_index
 
+    template['data_ori'] = arr
     template['data'] = np.array(sorted(arr, key=sort_func))
 
     template['chrom_ids'] = chrom_ids
@@ -565,43 +564,58 @@ cpdef choose_supplementary(dict template):
     cdef double read1_max = 0
     cdef double read2_max = 0
     cdef int i = 0
+    cdef int row_idx
 
-    for r in template['rows']:
-        if r[7] == 1 and r[9] > read1_max:  # Use original alignment score, not biased
+    primary_1 = None
+    primary_2 = None
+
+    data = template['inputdata']
+    data_table = template['data_ori']
+
+    for row_idx in template['rows']:
+        r = data_table[row_idx]
+        if r[7] == 1 and r[9] > read1_max:  # Use original alignment score, not biased (idx==4)
             read1_max = r[9]
+            primary_1 = row_idx
 
         elif r[7] == 2 and r[9] > read2_max:
             read2_max = r[9]
+            primary_2 = row_idx
 
-    ids_to_name = {v: k for k, v in template["chrom_ids"].items()}
+    # ids_to_name = {v: k for k, v in template["chrom_ids"].items()}
 
-    locs = []
-    cdef double m = 0
+    template['primary1'] = primary_1
+    template['primary2'] = primary_2
+    return
 
-    for r in template['rows']:
+    # locs = []
+    # cdef double m = 0
+    #
+    # for row_idx in template['rows']:
+    #     r = data_table[row_idx]
+    #     # echo(r)
+    #     # loc = "{}-{}-{}-{}".format(ids_to_name[int(r[0])], int(r[1]), int(r[6]), int(r[7]) )
+    #     # loc = f"{r[1]}-{r[2]}-{}-{}"
+    #     # locs.append(loc)
+    #     #
+    #     # if loc not in template['score_mat']:
+    #     #         template['score_mat'][loc] = []
+    #     # Values are popped when setting supplementary; prevents bug where read contains two identical aligns
+    #     # first in pair
+    #     if r[7] == 1:
+    #         m = read1_max
+    #     else:
+    #         m = read2_max
+    #
+    #     if r[9] == m:  # Primary, next best s
+    #         template['score_mat'][loc] += [True, 0]
+    #     else:
+    #         template['score_mat'][loc] += [False, 0]
+    # template['locs'] = locs
+    # echo(template['locs'])
 
-        loc = "{}-{}-{}-{}".format(ids_to_name[int(r[0])], int(r[1]), int(r[6]), int(r[7]) )
-        locs.append(loc)
-
-        if loc not in template['score_mat']:
-                template['score_mat'][loc] = []
-        # Values are popped when setting supplementary; prevents bug where read contains two identical aligns
-        if r[7] == 1:
-            m = read1_max
-        else:
-            m = read2_max
-
-        if r[9] == m:  # Primary, next best s
-            template['score_mat'][loc] += [True, 0]
-        else:
-            template['score_mat'][loc] += [False, 0]
-    template['locs'] = locs
-
-
-cpdef void score_alignments(dict template, # ri,
-                            template_rows,
-                            template_data,
-                            ):
+cpdef void score_alignments(dict template):
+    return
     # Scans all alignments for each query, slow for long reads but ok for short read data
     # the goal is to try and keep extra supplementary alignments that are not on the main alignment path
     # Used for DN, similar to XS
@@ -618,11 +632,18 @@ cpdef void score_alignments(dict template, # ri,
     cdef float ol = 0
     cdef float ori_aln_score = 0
     cdef int twoi = template["first_read2_index"]  # Use to skip read1/read2 alignments
+    cdef int row_indx
 
     idx = 0
-    for item in template_rows:
-        actual_row = item[5]
-        #qstart, qend, readn, ori_aln_score = template_data[actual_row, [2, 3, 7, 9]]
+
+    inputdata = template['inputdata']
+    tabledata = template['data_ori']
+
+    extra_row_idxs = []
+    # for item in template_rows:
+    for row_indx in template['rows']:
+
+        item = tabledata[5]
         qstart = item[2]
         qend = item[3]
         readn = item[7]
@@ -631,16 +652,16 @@ cpdef void score_alignments(dict template, # ri,
 
         if template["paired_end"]:
             if readn == 2:
-                rr = range(twoi, len(template_data))
+                rr = range(twoi, len(tabledata))
             else:
                 rr = range(0, twoi)
         else:
-            rr = range(len(template_data))
+            rr = range(len(tabledata))
 
         for i in rr:
-            if i == actual_row:
+            if i == row_indx:
                 continue
-            istart, iend, iscore = template_data[i, [2, 3, 4]]  # Note use biased align score, otherwise gets confusing
+            istart, iend, iscore = tabledata[i, [2, 3, 4]]  # Note use biased align score, otherwise gets confusing
             isize = (iend - istart) + 1e-6
             # Check for overlap
             ol = max(0, min(qend, iend) - max(qstart, istart))
@@ -657,7 +678,7 @@ cpdef void score_alignments(dict template, # ri,
 def add_scores(template, rows, float path_score, float second_best, float dis_to_normal, int norm_pairings):
 
     # The rows correspond to the indexes of the input array, not the original ordering of the data
-    template['rows'] = rows.astype(int)  # list(map(int, rows))
+    template['rows'] = rows
 
     # To get the original rows use, col 5 is the row index: mapped to actual index
     template['score_mat']["dis_to_next_path"] = path_score - second_best

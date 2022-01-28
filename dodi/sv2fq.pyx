@@ -1,4 +1,5 @@
 #cython: language_level = 3
+# cython: profile=True
 """
 Compiled utils to generate proper sam output and flag information
 """
