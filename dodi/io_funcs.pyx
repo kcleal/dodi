@@ -507,9 +507,12 @@ cpdef sam_to_array(template):
             if not template["paired_end"]:
 
                 if template['read1_length'] == 0:
-                    template['read1_length'] = template_length
                     if template_length == 0:
-                        raise ValueError('Could not infer template length')
+                        template_length = len(l[8])  # if length from cigar failed, use seq length
+                        if template_length <= 1:
+                            raise ValueError('Could not infer template length')
+
+                    template['read1_length'] = template_length
 
                 if flag & 16:  # Single end Reverse strand, count from end
                     start_temp = template["read1_length"] - query_end
@@ -546,10 +549,8 @@ cpdef sam_to_array(template):
                 raise ValueError
 
     template["first_read2_index"] = first_read2_index
-
     template['data_ori'] = arr
     template['data'] = np.array(sorted(arr, key=sort_func))
-
     template['chrom_ids'] = chrom_ids
 
     del template["inputfq"]
@@ -561,8 +562,8 @@ cpdef choose_supplementary(dict template):
     # Final alignments have been chosen, but need to decide which is supplementary
     cdef int j = 0
 
-    cdef double read1_max = 0
-    cdef double read2_max = 0
+    cdef double read1_max = -1
+    cdef double read2_max = -1
     cdef int i = 0
     cdef int row_idx
 
@@ -581,8 +582,6 @@ cpdef choose_supplementary(dict template):
         elif r[7] == 2 and r[9] > read2_max:
             read2_max = r[9]
             primary_2 = row_idx
-
-    # ids_to_name = {v: k for k, v in template["chrom_ids"].items()}
 
     template['primary1'] = primary_1
     template['primary2'] = primary_2

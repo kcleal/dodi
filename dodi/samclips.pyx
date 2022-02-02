@@ -440,7 +440,8 @@ cdef add_sequence_back(item, reverse_me, template):
 
 
 cdef list replace_sa_tags(alns):
-
+    if len(alns) == 0:
+        return alns
     if any([i[0] == "sup" for i in alns]):
         sa_tags = {}  # Read1: tag, might be multiple split alignments
         alns2 = []
@@ -486,9 +487,13 @@ cdef list replace_sa_tags(alns):
 cdef list replace_mc_tags(alns):
 
     # Replace MC mate cigar tag if set
+    if len(alns) <= 1:
+        return alns
+
     cdef int i
 
     a = alns[0][1]
+
     if alns[1][0] != "sup":
         b = alns[1][1]
     else:
@@ -532,19 +537,6 @@ cpdef list fixsam(dict template):
     primary1_idx = template['primary1']
     primary2_idx = template['primary2']
 
-    # echo(template['name'])
-    # echo(sam)
-    # echo(template['rows'])
-    # echo(template['inputdata'])
-
-    # for l in sam:
-    #
-    # if template['name'] == 'chr1_0_0:108410337-108410395.106942890-106942983|N-N.106943646.106943797':
-    #     echo(primary1_idx, primary2_idx)
-    #     echo(template['rows'])
-    #     echo(inputdata)
-    #     quit()
-
     # strip_tags = {'ZA', 'ZP', 'ZN', 'ZS', 'ZM', 'ZO'}
 
     for row_idx in template['rows']:
@@ -555,18 +547,8 @@ cpdef list fixsam(dict template):
 
         strand = "-1" if l[0] & 16 else "1"
         rid = str(2 if l[0] & 128 else 1)
-
-        # key = f"{l[1]}-{l[2]}-{strand}-{rid}"
-        #
-        # if len(score_mat[key]) > 2:
-        #     # Prevent bug where two identical alignments possible
-        #     aln_info_0, aln_info_1 = score_mat[key].pop(0), score_mat[key].pop(0)  # Remove first two items from list
-        # else:
-        #     aln_info_0, aln_info_1 = score_mat[key]
-
-        # xs = int(aln_info_1)
         xs = int(tabledata[row_idx, 4])  # the biased alignment score
-        # echo(l)
+
         if l[0] & 2048:
             os = "ZO:i:1"  # refers to "originally supplementary"
         else:
@@ -587,11 +569,6 @@ cpdef list fixsam(dict template):
             primary1 = l
         elif row_idx == primary2_idx:
             primary2 = l
-        # if aln_info_0:
-        #     if rid == "1":
-        #         primary1 = l
-        #     else:
-        #         primary2 = l
         else:
             out.append(['sup', l, False])  # Supplementary, False to decide if rev comp
 
@@ -610,15 +587,11 @@ cpdef list fixsam(dict template):
         rev_A, rev_B, primary1, primary2 = set_mate_flag(primary1, primary2, max_d, template["read1_reverse"], template["read2_reverse"])
 
         # Check if supplementary needs reverse complementing
-
         for i in range(len(out)):
-
             if out[i][1][0] & 64:  # First in pair  Note primary2 and primary1 order
                 revsup = set_supp_flags(out[i][1], primary2, template["read1_reverse"], rev_A)
-
             else:
                 revsup = set_supp_flags(out[i][1], primary1, template["read2_reverse"], rev_B)
-
             if revsup:
                 out[i][2] = True
 
@@ -671,10 +644,14 @@ cpdef list fixsam(dict template):
                 flag = set_bit(flag, 1, 0)
                 out[j][1][0] = flag
 
+        if out[j][1][2] == '0':
+            flag = int(out[j][1][0])
+            flag = set_bit(flag, 2, 1)  # set unmapped
+            out[j][1][0] = flag
+            out[j][1][1] = '*'
+
         out[j][1][0] = str(out[j][1][0])
 
-        if out[j][1][2] == '0':
-            echo('ERROR', out, template['name'])
 
     return [i[1] for i in out if i[1] != 0]
 

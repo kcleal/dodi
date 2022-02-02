@@ -86,7 +86,7 @@ def dodi_aligner(**kwargs):
     designating read_1 vs read_2."""
 
     show_params()
-
+    kwargs['paired'] = kwargs['paired'] == 'True'
     input_stream_alignments.process_reads(kwargs)
 
 

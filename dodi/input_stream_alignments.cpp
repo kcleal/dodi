@@ -1715,7 +1715,6 @@ static const char __pyx_k_test[] = "__test__";
 static const char __pyx_k_time[] = "time";
 static const char __pyx_k_tlen[] = "tlen";
 static const char __pyx_k_umad[] = "umad";
-static const char __pyx_k_False[] = "False";
 static const char __pyx_k_batch[] = "batch";
 static const char __pyx_k_click[] = "click";
 static const char __pyx_k_close[] = "close";
@@ -1821,7 +1820,6 @@ static const char __pyx_k_dodi_input_stream_alignments_pyx[] = "dodi/input_strea
 static const char __pyx_k_dodi_insert_size_not_enough_pair[] = "dodi insert size, not enough pairs, using 350 +/- 200";
 static PyObject *__pyx_kp_u_Cant_use_procs_1_with_fq_input;
 static PyObject *__pyx_kp_u_Elevating_alignments_in_include;
-static PyObject *__pyx_n_u_False;
 static PyObject *__pyx_n_s_L;
 static PyObject *__pyx_kp_u_Loading_MapQ_recalibrator;
 static PyObject *__pyx_kp_u_No_MapQ_recalibration;
@@ -6157,7 +6155,7 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  *     # Use single process
  * 
  *     find_insert_size = True             # <<<<<<<<<<<<<<
- *     if args['paired'] == 'False':
+ *     if not args['paired']:
  *         find_insert_size = False
  */
   __pyx_v_find_insert_size = 1;
@@ -6165,19 +6163,20 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
   /* "dodi/input_stream_alignments.pyx":270
  * 
  *     find_insert_size = True
- *     if args['paired'] == 'False':             # <<<<<<<<<<<<<<
+ *     if not args['paired']:             # <<<<<<<<<<<<<<
  *         find_insert_size = False
  * 
  */
   __pyx_t_12 = __Pyx_PyObject_Dict_GetItem(__pyx_v_args, __pyx_n_u_paired); if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 270, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_12);
-  __pyx_t_5 = (__Pyx_PyUnicode_Equals(__pyx_t_12, __pyx_n_u_False, Py_EQ)); if (unlikely(__pyx_t_5 < 0)) __PYX_ERR(0, 270, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyObject_IsTrue(__pyx_t_12); if (unlikely(__pyx_t_5 < 0)) __PYX_ERR(0, 270, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
-  if (__pyx_t_5) {
+  __pyx_t_4 = ((!__pyx_t_5) != 0);
+  if (__pyx_t_4) {
 
     /* "dodi/input_stream_alignments.pyx":271
  *     find_insert_size = True
- *     if args['paired'] == 'False':
+ *     if not args['paired']:
  *         find_insert_size = False             # <<<<<<<<<<<<<<
  * 
  *     if True:
@@ -6187,7 +6186,7 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
     /* "dodi/input_stream_alignments.pyx":270
  * 
  *     find_insert_size = True
- *     if args['paired'] == 'False':             # <<<<<<<<<<<<<<
+ *     if not args['paired']:             # <<<<<<<<<<<<<<
  *         find_insert_size = False
  * 
  */
@@ -6476,8 +6475,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  * 
  */
     __pyx_t_16 = PyList_GET_SIZE(__pyx_v_batch); if (unlikely(__pyx_t_16 == ((Py_ssize_t)-1))) __PYX_ERR(0, 289, __pyx_L1_error)
-    __pyx_t_5 = ((__pyx_t_16 < 100e3) != 0);
-    if (__pyx_t_5) {
+    __pyx_t_4 = ((__pyx_t_16 < 100e3) != 0);
+    if (__pyx_t_4) {
 
       /* "dodi/input_stream_alignments.pyx":290
  * 
@@ -6516,8 +6515,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  *                     insert, insert_std = insert_size(batch)
  *                     max_d = insert + (4 * insert_std)
  */
-      __pyx_t_5 = (__pyx_v_find_insert_size != 0);
-      if (__pyx_t_5) {
+      __pyx_t_4 = (__pyx_v_find_insert_size != 0);
+      if (__pyx_t_4) {
 
         /* "dodi/input_stream_alignments.pyx":295
  *                 max_d = default_max_d
@@ -6645,9 +6644,9 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  * 
  */
         __pyx_t_8 = PyObject_RichCompare(__pyx_v_max_d, __pyx_v_default_max_d, Py_NE); __Pyx_XGOTREF(__pyx_t_8); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 300, __pyx_L1_error)
-        __pyx_t_5 = __Pyx_PyObject_IsTrue(__pyx_t_8); if (unlikely(__pyx_t_5 < 0)) __PYX_ERR(0, 300, __pyx_L1_error)
+        __pyx_t_4 = __Pyx_PyObject_IsTrue(__pyx_t_8); if (unlikely(__pyx_t_4 < 0)) __PYX_ERR(0, 300, __pyx_L1_error)
         __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
-        if (__pyx_t_5) {
+        if (__pyx_t_4) {
 
           /* "dodi/input_stream_alignments.pyx":301
  * 
@@ -6685,9 +6684,9 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  */
         __pyx_t_8 = __Pyx_PyObject_Dict_GetItem(__pyx_v_temp, __pyx_n_u_passed); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 305, __pyx_L1_error)
         __Pyx_GOTREF(__pyx_t_8);
-        __pyx_t_5 = __Pyx_PyObject_IsTrue(__pyx_t_8); if (unlikely(__pyx_t_5 < 0)) __PYX_ERR(0, 305, __pyx_L1_error)
+        __pyx_t_4 = __Pyx_PyObject_IsTrue(__pyx_t_8); if (unlikely(__pyx_t_4 < 0)) __PYX_ERR(0, 305, __pyx_L1_error)
         __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
-        if (__pyx_t_5) {
+        if (__pyx_t_4) {
 
           /* "dodi/input_stream_alignments.pyx":306
  * 
@@ -6709,8 +6708,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  *                             sam_temp.append((temp["name"], sam))
  * 
  */
-          __pyx_t_5 = (__pyx_v_sam != Py_None)&&(PyList_GET_SIZE(__pyx_v_sam) != 0);
-          if (__pyx_t_5) {
+          __pyx_t_4 = (__pyx_v_sam != Py_None)&&(PyList_GET_SIZE(__pyx_v_sam) != 0);
+          if (__pyx_t_4) {
 
             /* "dodi/input_stream_alignments.pyx":308
  *                         sam = to_output(temp)
@@ -6749,8 +6748,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  *                             sam_temp = []
  */
           __pyx_t_18 = PyList_GET_SIZE(__pyx_v_sam_temp); if (unlikely(__pyx_t_18 == ((Py_ssize_t)-1))) __PYX_ERR(0, 310, __pyx_L1_error)
-          __pyx_t_5 = ((__pyx_t_18 > 0xC350) != 0);
-          if (__pyx_t_5) {
+          __pyx_t_4 = ((__pyx_t_18 > 0xC350) != 0);
+          if (__pyx_t_4) {
 
             /* "dodi/input_stream_alignments.pyx":311
  * 
@@ -6835,8 +6834,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  *             max_d = default_max_d
  */
   __pyx_t_13 = PyList_GET_SIZE(__pyx_v_batch); if (unlikely(__pyx_t_13 == ((Py_ssize_t)-1))) __PYX_ERR(0, 316, __pyx_L1_error)
-  __pyx_t_5 = ((__pyx_t_13 > 0) != 0);
-  if (__pyx_t_5) {
+  __pyx_t_4 = ((__pyx_t_13 > 0) != 0);
+  if (__pyx_t_4) {
 
     /* "dodi/input_stream_alignments.pyx":318
  *         if len(batch) > 0:
@@ -6855,8 +6854,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  *                 insert, insert_std = insert_size(batch)
  *                 max_d = insert + (4 * insert_std)
  */
-    __pyx_t_5 = (__pyx_v_find_insert_size != 0);
-    if (__pyx_t_5) {
+    __pyx_t_4 = (__pyx_v_find_insert_size != 0);
+    if (__pyx_t_4) {
 
       /* "dodi/input_stream_alignments.pyx":320
  *             max_d = default_max_d
@@ -6984,9 +6983,9 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  * 
  */
       __pyx_t_12 = PyObject_RichCompare(__pyx_v_max_d, __pyx_v_default_max_d, Py_NE); __Pyx_XGOTREF(__pyx_t_12); if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 325, __pyx_L1_error)
-      __pyx_t_5 = __Pyx_PyObject_IsTrue(__pyx_t_12); if (unlikely(__pyx_t_5 < 0)) __PYX_ERR(0, 325, __pyx_L1_error)
+      __pyx_t_4 = __Pyx_PyObject_IsTrue(__pyx_t_12); if (unlikely(__pyx_t_4 < 0)) __PYX_ERR(0, 325, __pyx_L1_error)
       __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
-      if (__pyx_t_5) {
+      if (__pyx_t_4) {
 
         /* "dodi/input_stream_alignments.pyx":326
  * 
@@ -7024,9 +7023,9 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  */
       __pyx_t_12 = __Pyx_PyObject_Dict_GetItem(__pyx_v_temp, __pyx_n_u_passed); if (unlikely(!__pyx_t_12)) __PYX_ERR(0, 330, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_12);
-      __pyx_t_5 = __Pyx_PyObject_IsTrue(__pyx_t_12); if (unlikely(__pyx_t_5 < 0)) __PYX_ERR(0, 330, __pyx_L1_error)
+      __pyx_t_4 = __Pyx_PyObject_IsTrue(__pyx_t_12); if (unlikely(__pyx_t_4 < 0)) __PYX_ERR(0, 330, __pyx_L1_error)
       __Pyx_DECREF(__pyx_t_12); __pyx_t_12 = 0;
-      if (__pyx_t_5) {
+      if (__pyx_t_4) {
 
         /* "dodi/input_stream_alignments.pyx":331
  * 
@@ -7048,8 +7047,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  *                         sam_temp.append((temp["name"], sam))
  *             batch = []
  */
-        __pyx_t_5 = (__pyx_v_sam != Py_None)&&(PyList_GET_SIZE(__pyx_v_sam) != 0);
-        if (__pyx_t_5) {
+        __pyx_t_4 = (__pyx_v_sam != Py_None)&&(PyList_GET_SIZE(__pyx_v_sam) != 0);
+        if (__pyx_t_4) {
 
           /* "dodi/input_stream_alignments.pyx":333
  *                     sam = to_output(temp)
@@ -7128,8 +7127,8 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  * 
  */
   __pyx_t_13 = PyList_GET_SIZE(__pyx_v_sam_temp); if (unlikely(__pyx_t_13 == ((Py_ssize_t)-1))) __PYX_ERR(0, 336, __pyx_L1_error)
-  __pyx_t_5 = ((__pyx_t_13 > 0) != 0);
-  if (__pyx_t_5) {
+  __pyx_t_4 = ((__pyx_t_13 > 0) != 0);
+  if (__pyx_t_4) {
 
     /* "dodi/input_stream_alignments.pyx":337
  * 
@@ -7160,21 +7159,21 @@ static PyObject *__pyx_pf_4dodi_23input_stream_alignments_22process_reads(CYTHON
  */
   __pyx_t_7 = __Pyx_PyObject_Dict_GetItem(__pyx_v_args, __pyx_n_u_output); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 339, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_7);
-  __pyx_t_4 = (__Pyx_PyUnicode_Equals(__pyx_t_7, __pyx_kp_u__17, Py_NE)); if (unlikely(__pyx_t_4 < 0)) __PYX_ERR(0, 339, __pyx_L1_error)
+  __pyx_t_5 = (__Pyx_PyUnicode_Equals(__pyx_t_7, __pyx_kp_u__17, Py_NE)); if (unlikely(__pyx_t_5 < 0)) __PYX_ERR(0, 339, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_7); __pyx_t_7 = 0;
-  if (!__pyx_t_4) {
+  if (!__pyx_t_5) {
   } else {
-    __pyx_t_5 = __pyx_t_4;
+    __pyx_t_4 = __pyx_t_5;
     goto __pyx_L39_bool_binop_done;
   }
   __pyx_t_7 = __Pyx_PyObject_Dict_GetItem(__pyx_v_args, __pyx_n_u_output); if (unlikely(!__pyx_t_7)) __PYX_ERR(0, 339, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_7);
-  __pyx_t_4 = (__pyx_t_7 != Py_None);
+  __pyx_t_5 = (__pyx_t_7 != Py_None);
   __Pyx_DECREF(__pyx_t_7); __pyx_t_7 = 0;
-  __pyx_t_9 = (__pyx_t_4 != 0);
-  __pyx_t_5 = __pyx_t_9;
+  __pyx_t_9 = (__pyx_t_5 != 0);
+  __pyx_t_4 = __pyx_t_9;
   __pyx_L39_bool_binop_done:;
-  if (__pyx_t_5) {
+  if (__pyx_t_4) {
 
     /* "dodi/input_stream_alignments.pyx":340
  * 
@@ -7405,7 +7404,6 @@ static struct PyModuleDef __pyx_moduledef = {
 static __Pyx_StringTabEntry __pyx_string_tab[] = {
   {&__pyx_kp_u_Cant_use_procs_1_with_fq_input, __pyx_k_Cant_use_procs_1_with_fq_input, sizeof(__pyx_k_Cant_use_procs_1_with_fq_input), 0, 1, 0, 0},
   {&__pyx_kp_u_Elevating_alignments_in_include, __pyx_k_Elevating_alignments_in_include, sizeof(__pyx_k_Elevating_alignments_in_include), 0, 1, 0, 0},
-  {&__pyx_n_u_False, __pyx_k_False, sizeof(__pyx_k_False), 0, 1, 0, 1},
   {&__pyx_n_s_L, __pyx_k_L, sizeof(__pyx_k_L), 0, 0, 1, 1},
   {&__pyx_kp_u_Loading_MapQ_recalibrator, __pyx_k_Loading_MapQ_recalibrator, sizeof(__pyx_k_Loading_MapQ_recalibrator), 0, 1, 0, 0},
   {&__pyx_kp_u_No_MapQ_recalibration, __pyx_k_No_MapQ_recalibration, sizeof(__pyx_k_No_MapQ_recalibration), 0, 1, 0, 0},

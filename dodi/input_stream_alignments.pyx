@@ -267,7 +267,7 @@ def process_reads(args):
     # Use single process
 
     find_insert_size = True
-    if args['paired'] == 'False':
+    if not args['paired']:
         find_insert_size = False
 
     if True:
