@@ -1,5 +1,5 @@
 #cython: language_level=3
-# cython: profile=True
+# cython: profile=False
 
 """
 Utils to generate proper sam output and flag information
@@ -30,9 +30,10 @@ cdef list set_tlen(out):
     pri_1 = out[0][1]
     pri_2 = out[1][1]
 
-    flg1 = pri_1[0]
-    flg2 = pri_2[0]
+    cdef int flg1 = pri_1[0]
+    cdef int flg2 = pri_2[0]
 
+    cdef int tlen1, tlen2, t1, t2, p1_pos, p2_pos
     if flg1 & 12 or flg2 & 12 or pri_1[1] != pri_2[1]:  # Read or mate unmapped, translocation
         tlen1 = 0
         tlen2 = 0
@@ -69,6 +70,7 @@ cdef list set_tlen(out):
     out2 = [(out[0][0], pri_1, out[0][2]), (out[1][0], pri_2, out[1][2])]
 
     # Set tlen's of supplementary
+    cdef int sup_flg, sup_pos
     for sup_tuple in out[2:]:
         sup_tuple = list(sup_tuple)
         sup_flg = sup_tuple[1][0]
@@ -120,11 +122,11 @@ cdef set_mate_flag(a, b, max_d, read1_rev, read2_rev):
     if chrom_b != mate_a:
         a[5] = chrom_b
 
-    aflag = a[0]
-    bflag = b[0]
+    cdef int aflag = a[0]
+    cdef int bflag = b[0]
 
-    reverse_A = False
-    reverse_B = False
+    cdef bint reverse_A = False
+    cdef bint reverse_B = False
 
     # If set as not primary, and has been aligned to reverse strand, and primary is mapped on forward
     # the sequence needs to be rev complement
@@ -192,6 +194,7 @@ cdef set_mate_flag(a, b, max_d, read1_rev, read2_rev):
     b[5] = arname
     b[6] = apos
 
+    cdef int p1, p2
     if not (apos == "-1" or bpos == "-1"):
 
         if arname == brname:
@@ -235,11 +238,11 @@ cdef set_mate_flag(a, b, max_d, read1_rev, read2_rev):
     return reverse_A, reverse_B, a, b
 
 
-cdef set_supp_flags(sup, pri, ori_primary_reversed, primary_will_be_reversed):
+cdef set_supp_flags(sup, pri, bint ori_primary_reversed, bint primary_will_be_reversed):
 
     # Set paired
-    supflag = sup[0]
-    priflag = pri[0]
+    cdef int supflag = sup[0]
+    cdef int priflag = pri[0]
 
     # Set paired and supplementary flag
     if not supflag & 1:
@@ -258,7 +261,7 @@ cdef set_supp_flags(sup, pri, ori_primary_reversed, primary_will_be_reversed):
     if supflag & 256:
         supflag = set_bit(supflag, 8, 0)
 
-    rev_sup = False
+    cdef bint rev_sup = False
 
     if ori_primary_reversed:
         if not supflag & 16:  # Read on forward strand
@@ -273,6 +276,20 @@ cdef set_supp_flags(sup, pri, ori_primary_reversed, primary_will_be_reversed):
     sup[6] = pri[2]
 
     return rev_sup
+
+
+cdef void set_supp_flag_single(sup, pri):
+    supflag = sup[0]
+    priflag = pri[0]
+
+    if not supflag & 2048:
+        supflag = set_bit(supflag, 11, 1)
+
+    # Turn off not-primary-alignment
+    if supflag & 256:
+        supflag = set_bit(supflag, 8, 0)
+
+    sup[0] = supflag
 
 
 cdef add_sequence_back(item, reverse_me, template):
@@ -295,148 +312,94 @@ cdef add_sequence_back(item, reverse_me, template):
     cdef int cigar_length = string_length + hard_clip_length
 
     if flag & 64:  # Read1
-        seq = template["read1_seq"]
-        q = template["read1_q"]
+        seq = template.read1_seq
+        q = template.read1_q
 
     elif flag & 128:
-        seq = template["read2_seq"]
-        q = template["read2_q"]
+        seq = template.read2_seq
+        q = template.read2_q
 
     else:
-        seq = template["read1_seq"]  # Unpaired
-        q = template["read1_q"]
+        seq = template.read1_seq  # Unpaired
+        q = template.read1_q
+
+    cdef int end = len(seq)
 
     if not seq:
-
         return item, False
 
-    if len(seq) != string_length:
-        if not flag & 2048:  # Always replace primary seq
-            if cigar_length == len(seq):
-                item[4] = item[4].replace("H", "S")
-                item[8] = seq
-                if q:
-                    item[9] = q
-                return item, True
-            else:
+    if cigar_length == len(seq):
+        item[4] = item[4].replace("H", "S")
+        item[8] = seq
+        if q:
+            item[9] = q
+        return item, True
 
-                return item, False  # todo try something here
-
-        elif template["replace_hard"] and q != "*":
-            # Sometimes current read had a hard-clip in cigar, but the primary read was not trimmed
-            if len(seq) != cigar_length:
-
-                return item, False  # Cigar length is not set properly by mapper
-            # If this is true, reset the Hard-clips with Soft-clips
-            item[4] = item[4].replace("H", "S")
-            item[8] = seq
-            if q:
-                item[9] = q
-            return item, True
-
-        return item, False
+    return item, False
 
     # Occasionally the H is missing, means its impossible to add sequence back in
-
-    if (flag & 64 and len(template["read1_seq"]) > cigar_length) or \
-            (flag & 128 and len(template["read2_seq"]) > cigar_length):
-
-        return item, False
-
-    cdef int start = 0
-    cdef int end = 0
-    if flag & 64 and template["read1_seq"]:
-        name = "read1"
-        if template["fq_read1_seq"] != 0:
-            end = len(template["fq_read1_seq"])
-        else:
-            end = len(template["read1_seq"])
-
-    elif flag & 128 and template["read2_seq"]:
-        name = "read2"
-        if template["fq_read2_seq"] != 0:
-            end = len(template["fq_read2_seq"])
-        else:
-            end = len(template["read2_seq"])
-    else:
-
-        return item, False  # read sequence is None or bad flag
-
-    # Try and replace H with S
-
-    if c[1] == "H" or c[-1] == "H":
-        # Replace hard with soft-clips
-        if cigar_length == end and template["replace_hard"]:
-            item[4] = item[4].replace("H", "S")
-
-        else:
-            # Remove seq
-            if c[1] == "H":
-                start += int(c[0])
-            if c[-1] == "H":
-                end -= int(c[-2])
-
-    # Might need to collect from the reverse direction; swap end and start
-    if flag & 256 or flag & 2048:
-        if flag & 64 and template["read1_reverse"] != bool(flag & 16):
-            # Different strand to primary, count from end
-            new_end = template["read1_length"] - start
-            new_start = template["read1_length"] - end
-            start = new_start
-            end = new_end
-
-        elif flag & 128 and (template["read2_reverse"] != bool(flag & 16)):
-            new_end = template["read2_length"] - start
-            new_start = template["read2_length"] - end
-            start = new_start
-            end = new_end
-
-    f_q_name = f"fq_{name}_q"
-    # Try and use the primary sequence to replace hard-clips
-    if item[9] == "*" or len(item[9]) < abs(end - start) or len(item[9]) == 0:
-        if template["replace_hard"] and template["fq_%s_q" % name]:
-            key = "fq_"
-        else:
-            key = ""
-        key_name = f"{key}{name}_seq"
-        key_name_q = f"{key}{name}_q"
-        s = template[key_name][start:end]  # "%s%s_seq" % (key, name)
-        q = template[key_name_q][start:end]  # "%s%s_q" % (key, name)
-
-        if len(s) == cigar_length:
-            item[8] = s
-            item[9] = q
-
-    # Try and use the supplied fq file to replace the sequence
-    elif template[f_q_name] != 0 and len(template[f_q_name]) > len(item[9]):  # "fq_%s_q" % name
-        sqn = f"fq_{name}_seq"
-        if item[9] in template[f_q_name]:
-            item[8] = template[sqn][start:end]
-            item[9] = template[f_q_name][start:end]
-
-        elif item[9] in template[f_q_name][::-1]:
-            s = io_funcs.reverse_complement(template[sqn], len(template[sqn]))[start:end]
-            q = template[f_q_name][::-1][start:end]
-            if len(s) == cigar_length:
-                item[8] = s
-                item[9] = q
-
-        else:
-            echo("---")
-            echo(item[9], flag)
-            echo(name)
-            echo(template["read1_q"])
-            echo(template["read2_q"])
-            echo(item)
-            raise ValueError
-
-    if len(item[8]) != cigar_length:
-        echo(len(item[8]), cigar_length, len(item[9]), start, end)
-        echo(template)
-        raise ValueError
-
-    assert len(item[8]) == cigar_length
-    return item, True
+# back
+#     if (flag & 64 and len(template.read1_seq) > cigar_length) or \
+#             (flag & 128 and len(template.read2_seq) > cigar_length):
+#
+#         return item, False
+#
+#     cdef int start = 0
+#
+#
+#     # Try and replace H with S
+#
+#     new_cigar = ''
+#     if c[1] == "H" or c[-1] == "H":
+#         # Replace hard with soft-clips
+#         if cigar_length == end: # and template.replace_hard:
+#             new_cigar = item[4].replace("H", "S")
+#
+#         else:
+#             # Remove seq
+#             if c[1] == "H":
+#                 start += int(c[0])
+#             if c[-1] == "H":
+#                 end -= int(c[-2])
+#
+#     # Might need to collect from the reverse direction; swap end and start
+#     if flag & 256 or flag & 2048:
+#         if flag & 64 and template.read1_reverse != bool(flag & 16):
+#             # Different strand to primary, count from end
+#             new_end = template.read1_length - start
+#             new_start = template.read1_length - end
+#             start = new_start
+#             end = new_end
+#
+#         elif flag & 128 and (template.read2_reverse != bool(flag & 16)):
+#             new_end = template.read2_length - start
+#             new_start = template.read2_length - end
+#             start = new_start
+#             end = new_end
+#
+#     # Try and use the primary sequence to replace hard-clips
+#     if item[9] == "*" or len(item[9]) < abs(end - start) or len(item[9]) == 0:
+#         if flag & 64:  # Read1
+#             s = template.read1_seq[start:end]
+#             q = template.read1_q[start:end]
+#         else:
+#             s = template.read2_seq[start:end]
+#             q = template.read2_q[start:end]
+#         if len(s) == cigar_length:
+#             item[8] = s
+#             item[9] = q
+#
+#     if len(item[8]) != cigar_length:
+#         echo(item)
+#         echo(len(template.read1_seq), len(template.read2_seq))
+#         echo(len(item[8]), cigar_length, len(item[9]), start, end)
+#         #raise ValueError
+#         quit()
+#         return item, False
+#
+#     assert len(item[8]) == cigar_length
+#     item[4] = new_cigar
+#     return item, True
 
 
 cdef list replace_sa_tags(alns):
@@ -513,17 +476,50 @@ cdef list replace_mc_tags(alns):
     return alns
 
 
-cpdef list fixsam(dict template):
+cdef modify_split_read_mapq(template, primary1, primary2, out):
+    if len(out) == 0:
+        return
+
+    cdef float max_d = template.max_d
+    for _, sup, _ in out:
+        flag_sup = sup[0]
+
+        if flag_sup & 64:  # supplementary is first-in-pair
+            if abs(int(primary2[2]) - int(sup[2])) < max_d:
+                # flag_pri = primary1[0]
+                # only apply to forward-reverse?
+                # pp = False
+                # if primary1.pos < sup.pos:
+                #     if not flag_pri & 16 and flag_sup & 16:
+                #         # proper pair
+                #         pp = True
+                #
+                # else:
+                #     if not flag_sup & 16 and flag_pri & 16:
+                #         # proper pair
+                #         pp = True
+                # if pp:
+                max_mapq = str(max(int(primary2[3]), int(sup[3])))
+                primary2[3] = max_mapq
+                sup[3] = max_mapq
+
+        else:
+            if abs(int(primary1[2]) - int(sup[2])) < max_d:
+                max_mapq = str(max(int(primary1[3]), int(sup[3])))
+                primary1[3] = max_mapq
+                sup[3] = max_mapq
+
+
+cpdef list fixsam(template, modify_mapq, add_tags):
 
     cdef int j, row_idx
-    # sam = [template['inputdata'][i[5]] for i in template['rows']]  # Get chosen rows
 
-    sam = [template['inputdata'][j] for j in template['rows']]
+    sam = [template.inputdata[j] for j in template.rows]
 
-    max_d = template['max_d']
+    max_d = template.max_d
 
-    paired = False if template["read2_length"] is 0 else True
-    score_mat = template['score_mat']
+    paired = False if template.read2_length is 0 else True
+    score_mat = template.score_mat
 
     out = []
     primary1 = None
@@ -531,15 +527,15 @@ cpdef list fixsam(dict template):
     rev_A = False
     rev_B = False
 
-    inputdata = template['inputdata']
-    tabledata = template['data_ori']
+    inputdata = template.inputdata
+    tabledata = template.data_ori
 
-    primary1_idx = template['primary1']
-    primary2_idx = template['primary2']
+    primary1_idx = template.primary1
+    primary2_idx = template.primary2
 
     # strip_tags = {'ZA', 'ZP', 'ZN', 'ZS', 'ZM', 'ZO'}
 
-    for row_idx in template['rows']:
+    for row_idx in template.rows:
 
         l = inputdata[row_idx]
 
@@ -549,21 +545,19 @@ cpdef list fixsam(dict template):
         rid = str(2 if l[0] & 128 else 1)
         xs = int(tabledata[row_idx, 4])  # the biased alignment score
 
-        if l[0] & 2048:
-            os = "ZO:i:1"  # refers to "originally supplementary"
-        else:
-            os = "ZO:i:0"
-        l += [
-              "ZA:i:" + str(xs),
-              "ZP:f:" + str(round(score_mat["dis_to_next_path"], 0)),
-              "ZN:f:" + str(round(score_mat["dis_to_normal"], 2)),
-              "ZS:f:" + str(round(score_mat["path_score"], 2)),
-              "ZM:f:" + str(round(score_mat["normal_pairings"], 1)),
-              os
-              ]
-
-        if round(score_mat["path_score"], 2) < 0:
-            echo('ERROR path socre < 0', template['name'], l)
+        if add_tags:
+            if l[0] & 2048:
+                os = "ZO:i:1"  # refers to "originally supplementary"
+            else:
+                os = "ZO:i:0"
+            l += [
+                  "ZA:i:" + str(xs),
+                  "ZP:f:" + str(round(score_mat["dis_to_next_path"], 0)),
+                  "ZN:f:" + str(round(score_mat["dis_to_normal"], 2)),
+                  "ZS:f:" + str(round(score_mat["path_score"], 2)),
+                  "ZM:f:" + str(round(score_mat["normal_pairings"], 1)),
+                  os
+                  ]
 
         if row_idx == primary1_idx:
             primary1 = l
@@ -572,44 +566,43 @@ cpdef list fixsam(dict template):
         else:
             out.append(['sup', l, False])  # Supplementary, False to decide if rev comp
 
-    if (primary1 is None or primary2 is None) and template["paired_end"]:
+    if (primary1 is None or primary2 is None) and template.paired_end:
         if primary1 is None:
-            primary1 = template['inputdata'][0]
+            primary1 = template.inputdata[0]
             primary1[0] = int(primary1[0])
         if primary2 is None:
-            primary2 = template['inputdata'][template['first_read2_index']]  # unmapped
+            primary2 = template.inputdata[template.first_read2_index]  # unmapped
             primary2[0] = int(primary2[0])
 
 
-    if paired and template["paired_end"]:
+    if paired and template.paired_end:
 
         # rev_A/B are set to true/false indicating if the primary aligns should eb reverse complemented
-        rev_A, rev_B, primary1, primary2 = set_mate_flag(primary1, primary2, max_d, template["read1_reverse"], template["read2_reverse"])
+        rev_A, rev_B, primary1, primary2 = set_mate_flag(primary1, primary2, max_d, template.read1_reverse, template.read2_reverse)
 
         # Check if supplementary needs reverse complementing
         for i in range(len(out)):
             if out[i][1][0] & 64:  # First in pair  Note primary2 and primary1 order
-                revsup = set_supp_flags(out[i][1], primary2, template["read1_reverse"], rev_A)
+                revsup = set_supp_flags(out[i][1], primary2, template.read1_reverse, rev_A)
             else:
-                revsup = set_supp_flags(out[i][1], primary1, template["read2_reverse"], rev_B)
+                revsup = set_supp_flags(out[i][1], primary1, template.read2_reverse, rev_B)
             if revsup:
                 out[i][2] = True
 
         # increase mapq of supplementary to match primary if possible
-        # for i in out:
-        #     if i[1][0] & 64 and primary1[4]:  # first in pair
-        #         mapq_pri = int(primary1[4])
-        #         mapq_sup = int(i[1][4])
-        #
-        #     if mapq_pri > mapq_sup:
+        if modify_mapq:
+            modify_split_read_mapq(template, primary1, primary2, out)
 
+    if primary1 is None:
+        return []
 
-
-    if template["paired_end"]:
+    if template.paired_end:
         out = [('pri', primary1, rev_A), ('pri', primary2, rev_B)] + out
         out = set_tlen(out)
 
     else:
+        for i in range(len(out)):
+            set_supp_flag_single(out[i][1], primary1)
         out = [('pri', primary1, rev_A)] + out
 
     # Add read seq info back in if necessary, before reverse complementing. Check for hard clips and clip as necessary
@@ -651,7 +644,6 @@ cpdef list fixsam(dict template):
             out[j][1][1] = '*'
 
         out[j][1][0] = str(out[j][1][0])
-
 
     return [i[1] for i in out if i[1] != 0]
 

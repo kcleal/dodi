@@ -69,13 +69,13 @@ for item in ["io_funcs", "input_stream_alignments", "pairing", "samclips"]:
                                  [f"dodi/{item}.pyx"],
                                  library_dirs=[numpy.get_include()],
                                  extra_compile_args=extras,
-                                 language="c++"))
+                                 language="c"))
 
 
 print("Found packages", find_packages(where="."))
 setup(
     name="dodi",
-    version='0.3.0',
+    version='0.4.0',
     python_requires='>=3.7',
     install_requires=[
             'cython',

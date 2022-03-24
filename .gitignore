@@ -1,3 +1,5 @@
 *.so
 build
 *.c
+*.cpp
+/dodi/pairing.cpp

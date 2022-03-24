@@ -1,5 +1,5 @@
 #cython: language_level=3
-# cython: profile=True
+# cython: profile=False
 
 from __future__ import absolute_import
 import multiprocessing
@@ -12,117 +12,54 @@ import pickle
 import numpy as np
 from sys import stderr
 import logging
+import gc
+from contextlib import closing
 
 from . import pairing, io_funcs, samclips
-from sys import stderr
+from dodi.io_funcs import make_template, sam_to_str
+from libc.stdio cimport FILE, stdout
+
+
+cdef extern from "stdio.h":
+    FILE *fopen(const char *, const char *)
+    int fclose(FILE *)
+    int fputs(const char *, FILE *)
 
 
 def echo(*arg):
     click.echo(arg, err=True)
 
 
-cdef void process_template(read_template):
-    paired = io_funcs.sam_to_array(read_template)
-
-    # if read_template['name'] == 'V300096939L3C004R0130394504':
-    #     print(read_template, file=stderr)
-    #     print("PAIRED", file=stderr)
-    #     print(paired, file=stderr)
-
+cdef void process_template(read_template, add_tags):
+    paired = io_funcs.sam_to_array(read_template, add_tags)
     if paired:
         return
 
-    res = pairing.process(read_template)
+    pairing.process(read_template)
+    if not read_template.passed:
+        return
 
-    # if read_template['name'] == 'V300096939L3C004R0130394504':
-    #     #     print(read_template)
-    #     #     print(read_template['data'].astype(int))
-    #     #     print(res)
-    if res:
-        read_template["passed"] = True
-        io_funcs.add_scores(read_template, *res)
-        io_funcs.choose_supplementary(read_template)
-        if read_template['secondary']:
-            io_funcs.score_alignments(read_template)
+    io_funcs.choose_supplementary(read_template)
+    if read_template.secondary:
+        io_funcs.score_alignments(read_template)
 
 
-cpdef list to_output(dict template):
+cpdef list to_output(template, modify_mapq, add_tags):
 
-    if "outstr" in template:
-        return list(template["outstr"])
+    if template.outstr is not None:
+        return list(template.outstr)
 
-    return samclips.fixsam(template)
-
-
-def load_mq_model(pth):
-    if pth:
-        click.echo("Loading MapQ recalibrator {}".format(pth), err=True)
-        return pickle.load(open(pth, "rb"))
-    else:
-        click.echo("No MapQ recalibration", err=True)
-        return None
+    return samclips.fixsam(template, modify_mapq, add_tags)
 
 
-def phred_from_model(p):
-    if p == 1:
-        return 30
-    if p < 0.5:
-        return 0
-    # return 40
-    P = 1 - p
-    v = int(round(-10 * np.log10(P)))
-    return v if v <= 30 else 30
-
-
-def predict_mapq(xtest, model):
-    return list(map(phred_from_model, model.predict_proba(xtest)[:, 1]))
-
-
-cdef write_records(sam, mq_model, outsam):
-    # Model features are "AS", "DA", "DN", "DP", "NP", "PS", "XS", "kind_key", "mapq", "DS
-    # if not mq_model:
-    for name, record in sam:
-        outsam.write(io_funcs.sam_to_str(name, record))
-
-    # else:
-    #     map_qs = []
-    #     for name, alns in sam:
-    #
-    #         for a in alns:
-    #             mapq = a[3]
-    #
-    #             t = {i[:2]: i[5:] for i in a[10:]}
-    #             kind_key = 0 if int(a[0]) & 2048 else 1
-    #             f = [t["AS"], t["DA"], t["DN"], t["DP"], t["NP"], t["PS"], t["XS"] if "XS" in t else 0, kind_key, mapq, t["DS"]]
-    #             map_qs.append(f)
-    #
-    #     mqs = iter(predict_mapq(np.array(map_qs).astype(float), mq_model))
-    #
-    #     for name, alns in sam:
-    #         for i in range(len(alns)):
-    #             flag = int(alns[i][0])
-    #             # cigar = alns[i][4]
-    #             mq = next(mqs)
-    #
-    #             if flag & 2048:
-    #                 if flag & 4:
-    #                     alns[i][3] = "0"
-    #                 else:
-    #                     alns[i][3] = str(mq)
-    #
-    #         outsam.write(io_funcs.sam_to_str(name, alns))
-
-
-cpdef list job(data_tuple):
-
+cpdef list job(data_tuple, modify_mapq, add_tags):
     temp = io_funcs.make_template(*data_tuple)
-
-    process_template(temp)
+    process_template(temp, add_tags)
     sam_temp = []
-    if temp['passed']:
-        sam = to_output(temp)
+    if temp.passed:
+        sam = to_output(temp, modify_mapq, add_tags)
         if sam:
-            sam_temp.append((temp["name"], sam))
+            sam_temp.append((temp.name, sam))
     return sam_temp
 
 
@@ -175,13 +112,13 @@ def get_insert_params(L, mads=8):
 
 def insert_size(batch):
 
-    cdef int required = 97
+    required = 97
     restricted = 3484
     cdef int flag_mask = required | restricted
 
     tlens = []
     for b in batch:
-        for aln, _ in b['inputdata']:
+        for aln, _ in b.inputdata:
             flag = int(aln[1])
             if not flag & 2:
                 continue
@@ -201,121 +138,159 @@ def insert_size(batch):
     return insert_m, insert_stdev
 
 
+def process_batch(args):
+
+    paired_end, match_score, bias, secondary, min_aln, max_hom, \
+    inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d, \
+    mu, sigma, find_insert_size, add_tags, modify_mapq, batch = args
+
+    batch = [make_template(rows, last_seen_chrom, paired_end, match_score, bias, secondary, min_aln, max_hom,
+                           inter_cost, U, zero_cost_boundary, max_gap_cost) for rows, last_seen_chrom in batch]
+    max_d = default_max_d
+    insert = mu
+    insert_std = sigma
+
+    res = bytearray(''.encode('ascii'))
+    if find_insert_size:
+        insert, insert_std = insert_size(batch)
+        max_d = insert + (4 * insert_std)
+
+    for temp in batch:
+
+        if max_d != default_max_d:
+            temp.max_d = max_d
+        temp.max_d = max_d
+        temp.mu = insert
+        temp.sigma = insert_std
+
+        process_template(temp, add_tags)
+
+        if temp.passed:
+            sam = to_output(temp, modify_mapq, add_tags)
+            if sam:
+                byte_string = sam_to_str(temp.name, sam).encode('ascii')
+                res.extend(byte_string)
+
+    byte_string = bytes(res)
+    return byte_string
+
+
+
 def process_reads(args):
     t0 = time.time()
 
-    insert_std = args["template_size"].split(",")
-    args["insert_median"] = float(insert_std[0])
-    args["insert_stdev"] = float(insert_std[1])
+    args["insert_median"] = 300.
+    args["insert_stdev"] = 200.
+    if args['template_size'] != 'auto':
+        insert_std = args["template_size"].split(",")
+        args["insert_median"] = float(insert_std[0])
+        args["insert_stdev"] = float(insert_std[1])
+
 
     if not args["include"]:
         args["bias"] = 1.0
     else:
         logging.info("Elevating alignments in --include with --bias {}".format(args["bias"]))
 
+    cdef FILE * outsam
+    cdef char *fname
     if args["output"] in {"-", "stdout"} or args["output"] is None:
-        outsam = sys.stdout
+        outsam = stdout
     else:
-        outsam = open(args["output"], "w")
+        filename_byte_string = args["output"].encode("UTF-8")
+        fname = filename_byte_string
+        outsam = fopen(fname, "rb") #open(args["output"], "w")
 
-    if (args["fq1"] or args["fq2"]) and args["procs"] > 1:
-        raise ValueError("Cant use procs > 1 with fq input")
-
-    map_q_recal_model = None  # load_mq_model(args["mq"])
-
+    #
+    #
     count = 0
 
     version = pkg_resources.require("dodi")[0].version
     itr = io_funcs.iterate_mappings(args, version)
 
-    isize = (args["insert_median"], args["insert_stdev"])
-    match_score = args["match_score"]
-    pairing_params = (args["max_insertion"], args["min_aln"], args["max_overlap"], args["ins_cost"],
-                      args["ol_cost"], args["inter_cost"], args["u"])
-    paired_end = int(args["paired"] == "True")
-    bias = args["bias"]
-    replace_hard = int(args["replace_hardclips"] == "True")
-    secondary = args['secondary'] == 'True'
+    cdef float match_score = args["match_score"]
+    cdef float mu = args["insert_median"]
+    cdef float sigma = args["insert_stdev"]
+    cdef float min_aln = args["min_aln"]
+    cdef float max_hom = args["max_overlap"]
+    cdef float inter_cost = args["inter_cost"]
+    cdef float U = args["u"]
+    cdef float zero_cost_boundary = args["zero_cost_boundary"]
+    cdef float max_gap_cost = args["max_gap_cost"]
+    cdef bint paired_end = int(args["paired"])
+    cdef float bias = args["bias"]
+    cdef bint secondary = args['secondary']
 
-    default_max_d = args["insert_median"] + 4*args["insert_stdev"]  # Separation distance threshold to call a pair discordant
+    cdef float default_max_d = mu + (4*sigma) # Separation distance threshold to call a pair discordant
 
-    # if args["procs"] != 1:
-    #
-    #     header_string = next(itr)
-    #     outsam.write(header_string)
-    #
-    #     temp = []
-    #     for rows, last_seen_chrom, fq in itr:
-    #         temp.append((rows, max_d, last_seen_chrom, fq, pairing_params, paired_end, isize,
-    #                                      match_score, bias, replace_hard))
-    #
-    #         if len(temp) > 10000:
-    #             with multiprocessing.Pool(args["procs"]) as p:
-    #                 res = p.map(job, temp)
-    #
-    #             res = [item for sublist in res for item in sublist if item]  # Remove [] and flatten list
-    #             write_records(res, map_q_recal_model, outsam)
-    #             temp = []
-    #
-    #     if len(temp) > 0:
-    #
-    #         with multiprocessing.Pool(args["procs"]) as p:
-    #             res = p.map(job, temp)
-    #         res = [item for sublist in res for item in sublist if item]
-    #         write_records(res, map_q_recal_model, outsam)
-
-    # Use single process
-
-    find_insert_size = True
+    cdef bint find_insert_size = True
     if not args['paired']:
         find_insert_size = False
 
-    if True:
+    modify_mapq = args['modify_mapq']
+    add_tags = args['tags']
+    n_jobs = args['procs']
+
+    cdef char* to_write
+    cdef bytes byte_string
+
+    if paired_end:
+        batch_size = 10_000
+    else:
+        batch_size = 10
+
+    if n_jobs == 1:
 
         header_string = next(itr)
-        outsam.write(header_string)
 
-        sam_temp = []
+        byte_string = header_string.encode('ascii')
+        to_write = byte_string
+        fputs(to_write, outsam)
 
+        jobs = []
         batch = []
-        for rows, last_seen_chrom, fq in itr:
+        for rows, last_seen_chrom in itr:
 
             count += 1
 
-            # rows, max_d, last_seen_chrom, fq
-            temp = io_funcs.make_template(rows, default_max_d, last_seen_chrom, fq, pairing_params, paired_end, isize,
-                                         match_score, bias, replace_hard, secondary)
+            temp = make_template(rows, last_seen_chrom, paired_end, match_score, bias, secondary, min_aln, max_hom,
+                                 inter_cost, U, zero_cost_boundary, max_gap_cost)
 
-            if len(batch) < 100e3:
+            if len(batch) < batch_size:
                 batch.append(temp)
-
             else:
+                # process one batch
                 max_d = default_max_d
+                insert = mu
+                insert_std = sigma
+
                 if find_insert_size:
                     insert, insert_std = insert_size(batch)
                     max_d = insert + (4 * insert_std)
 
                 for temp in batch:
-
                     if max_d != default_max_d:
-                        temp['max_d'] = max_d
+                        temp.max_d = max_d
+                    temp.max_d = max_d
+                    temp.mu = insert
+                    temp.sigma = insert_std
 
-                    process_template(temp)
+                    process_template(temp, add_tags)
 
-                    if temp['passed']:
-                        sam = to_output(temp)
+                    if temp.passed:
+                        sam = to_output(temp, modify_mapq, add_tags)
                         if sam:
-                            sam_temp.append((temp["name"], sam))
+                            byte_string = sam_to_str(temp.name, sam).encode('ascii')
+                            to_write = byte_string
+                            fputs(to_write, outsam)
 
-                        if len(sam_temp) > 50000:
-                            write_records(sam_temp, map_q_recal_model, outsam)
-                            sam_temp = []
                 batch = []
-
 
         if len(batch) > 0:
 
             max_d = default_max_d
+            insert = mu
+            insert_std = sigma
             if find_insert_size:
                 insert, insert_std = insert_size(batch)
                 max_d = insert + (4 * insert_std)
@@ -323,21 +298,76 @@ def process_reads(args):
             for temp in batch:
 
                 if max_d != default_max_d:
-                    temp['max_d'] = max_d
+                    temp.max_d = max_d
+                temp.max_d = max_d
+                temp.mu = insert
+                temp.sigma = insert_std
 
-                process_template(temp)
-
-                if temp['passed']:
-                    sam = to_output(temp)
+                process_template(temp, add_tags)
+                if temp.passed:
+                    sam = to_output(temp, modify_mapq, add_tags)
                     if sam:
-                        sam_temp.append((temp["name"], sam))
+                        byte_string = sam_to_str(temp.name, sam).encode('ascii')
+                        to_write = byte_string
+                        fputs(to_write, outsam)
+
             batch = []
 
-        if len(sam_temp) > 0:
-            write_records(sam_temp, map_q_recal_model, outsam)
+    else:
 
-    if args["output"] != "-" or args["output"] is not None:
-        outsam.close()
+        header_string = next(itr)
+
+        byte_string = header_string.encode('ascii')
+        to_write = byte_string
+        fputs(to_write, outsam)
+
+        with closing(multiprocessing.Pool(n_jobs)) as p:
+
+            jobs = []
+            batch = []
+            for rows, last_seen_chrom in itr:
+
+                count += 1
+
+                data = (rows, last_seen_chrom)
+
+                if len(batch) < batch_size:
+                    batch.append(data)
+
+                else:
+                    if len(jobs) < n_jobs:
+                        jobs.append(batch)
+                        batch = []
+                    else:
+                        batch = [(paired_end, match_score, bias, secondary, min_aln, max_hom,
+                                  inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d,
+                                  mu, sigma, find_insert_size, add_tags, modify_mapq, j) for j in jobs]
+
+
+                        res = p.map(process_batch, batch)
+                        for byte_string in res:
+                            to_write = byte_string
+                            fputs(to_write, outsam)
+                        batch = []
+                        jobs = []
+                        gc.collect()
+
+            if len(batch) > 0 or len(jobs) > 0:
+
+                jobs.append(batch)
+                batch = [(paired_end, match_score, bias, secondary, min_aln, max_hom,
+                          inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d,
+                          mu, sigma, find_insert_size, add_tags, modify_mapq, j) for j in jobs]
+
+                # with multiprocessing.Pool(n_jobs) as p:
+                res = p.map(process_batch, batch)
+                for byte_string in res:
+                    to_write = byte_string
+                    fputs(to_write, outsam)
+                batch = []
+                jobs = []
+
+    fclose(outsam)
 
     logging.info("dodi completed in {} h:m:s".format(str(datetime.timedelta(seconds=int(time.time() - t0)))),
                )
