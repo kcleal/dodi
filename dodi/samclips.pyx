@@ -476,11 +476,10 @@ cdef list replace_mc_tags(alns):
     return alns
 
 
-cdef modify_split_read_mapq(template, primary1, primary2, out):
+cdef modify_split_read_mapq(template, primary1, primary2, out, max_d):
     if len(out) == 0:
         return
 
-    cdef float max_d = template.max_d
     for _, sup, _ in out:
         flag_sup = sup[0]
 
@@ -510,13 +509,13 @@ cdef modify_split_read_mapq(template, primary1, primary2, out):
                 sup[3] = max_mapq
 
 
-cpdef list fixsam(template, modify_mapq, add_tags):
+cpdef list fixsam(template, params):
 
     cdef int j, row_idx
 
-    sam = [template.inputdata[j] for j in template.rows]
+    # sam = [template.inputdata[j] for j in template.rows]
 
-    max_d = template.max_d
+    max_d = params.default_max_d
 
     paired = False if template.read2_length is 0 else True
     score_mat = template.score_mat
@@ -545,7 +544,7 @@ cpdef list fixsam(template, modify_mapq, add_tags):
         rid = str(2 if l[0] & 128 else 1)
         xs = int(tabledata[row_idx, 4])  # the biased alignment score
 
-        if add_tags:
+        if params.add_tags:
             if l[0] & 2048:
                 os = "ZO:i:1"  # refers to "originally supplementary"
             else:
@@ -560,13 +559,19 @@ cpdef list fixsam(template, modify_mapq, add_tags):
                   ]
 
         if row_idx == primary1_idx:
+            # set flag to pri
+            flag = set_bit(l[0], 11, 0)
+            l[0] = set_bit(flag, 8, 0)
             primary1 = l
+
         elif row_idx == primary2_idx:
+            flag = set_bit(l[0], 11, 0)
+            l[0] = set_bit(flag, 8, 0)
             primary2 = l
         else:
             out.append(['sup', l, False])  # Supplementary, False to decide if rev comp
 
-    if (primary1 is None or primary2 is None) and template.paired_end:
+    if (primary1 is None or primary2 is None) and params.paired_end:
         if primary1 is None:
             primary1 = template.inputdata[0]
             primary1[0] = int(primary1[0])
@@ -590,13 +595,13 @@ cpdef list fixsam(template, modify_mapq, add_tags):
                 out[i][2] = True
 
         # increase mapq of supplementary to match primary if possible
-        if modify_mapq:
-            modify_split_read_mapq(template, primary1, primary2, out)
+        if params.modify_mapq:
+            modify_split_read_mapq(template, primary1, primary2, out, params.default_max_d)
 
     if primary1 is None:
         return []
 
-    if template.paired_end:
+    if params.paired_end:
         out = [('pri', primary1, rev_A), ('pri', primary2, rev_B)] + out
         out = set_tlen(out)
 
@@ -608,7 +613,6 @@ cpdef list fixsam(template, modify_mapq, add_tags):
     # Add read seq info back in if necessary, before reverse complementing. Check for hard clips and clip as necessary
 
     for a_type, aln, reverse_me in out:
-
         if aln:  # None here means no alignment for primary2
 
             # Do for all supplementary

@@ -22,7 +22,7 @@ defaults = {"paired": "True",
             "template_size": "auto",
             "replace_hardclips": "False",
             "max_insertion": 150,
-            "min_aln": 30,
+            "min_aln": 10,
 
             "max_overlap": 150,
             "ins_cost": 0.1,
@@ -32,7 +32,7 @@ defaults = {"paired": "True",
             "max_gap_cost": 100,
 
             "inter_cost": 1,
-            "u": 15,
+            "u": 9,
             "match_score": 1,
             "bias": 1.15,
             "secondary": 'True'
@@ -74,12 +74,12 @@ def show_params():
 @click.option("--min-aln", help="Minimum alignment length", default=defaults["min_aln"], type=float, show_default=True)
 @click.option("--max-overlap", help="Maximum overlap between successive alignments", default=defaults["max_overlap"],
               type=float, show_default=True)
-# @click.option("--ins-cost", help="Insertion cost", default=defaults["ins_cost"], type=float, show_default=True)
-# @click.option("--ol-cost", help="Overlapping alignment cost", default=defaults["ol_cost"], type=float,
-#               show_default=True)
-@click.option("-z", "--zero-cost-boundary", help="Gaps < z in length receive zero cost while gaps >= z have a linear cost", default=defaults["zero_cost_boundary"], type=float, show_default=True)
-@click.option("-g", "--max-gap-cost", help="Gaps >= g in length receive max-gap-cost", default=defaults["max_gap_cost"], type=float,
+@click.option("--ins-cost", help="Insertion cost", default=defaults["ins_cost"], type=float, show_default=True)
+@click.option("--ol-cost", help="Overlapping alignment cost", default=defaults["ol_cost"], type=float,
               show_default=True)
+# @click.option("-z", "--zero-cost-boundary", help="Gaps < z in length receive zero cost while gaps >= z have a linear cost", default=defaults["zero_cost_boundary"], type=float, show_default=True)
+# @click.option("-g", "--max-gap-cost", help="Gaps >= g in length receive max-gap-cost", default=defaults["max_gap_cost"], type=float,
+#               show_default=True)
 @click.option("-c", "--inter-cost", help="Cost of inter-chromosomal jump", default=defaults["inter_cost"], type=float,
               show_default=True)
 @click.option("-u", '--pairing-cost', help="Pairing cost", default=defaults["u"], type=float, show_default=True)

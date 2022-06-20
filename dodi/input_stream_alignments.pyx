@@ -14,9 +14,11 @@ from sys import stderr
 import logging
 import gc
 from contextlib import closing
+from dataclasses import dataclass
 
 from . import pairing, io_funcs, samclips
 from dodi.io_funcs import make_template, sam_to_str
+from dodi.io_funcs cimport Params
 from libc.stdio cimport FILE, stdout
 
 
@@ -30,37 +32,36 @@ def echo(*arg):
     click.echo(arg, err=True)
 
 
-cdef void process_template(read_template, add_tags):
-    paired = io_funcs.sam_to_array(read_template, add_tags)
-    if paired:
+cdef void process_template(read_template, params):
+    done = io_funcs.sam_to_array(read_template, params)
+    if done:
         return
 
-    pairing.process(read_template)
+    pairing.process(read_template, params)
     if not read_template.passed:
         return
 
     io_funcs.choose_supplementary(read_template)
-    if read_template.secondary:
-        io_funcs.score_alignments(read_template)
+    # if read_template.secondary:
+    #     io_funcs.score_alignments(read_template, params)
 
 
-cpdef list to_output(template, modify_mapq, add_tags):
-
-    if template.outstr is not None:
+cpdef list to_output(template, params):
+    if template.outstr:
         return list(template.outstr)
 
-    return samclips.fixsam(template, modify_mapq, add_tags)
+    return samclips.fixsam(template, params)
 
 
-cpdef list job(data_tuple, modify_mapq, add_tags):
-    temp = io_funcs.make_template(*data_tuple)
-    process_template(temp, add_tags)
-    sam_temp = []
-    if temp.passed:
-        sam = to_output(temp, modify_mapq, add_tags)
-        if sam:
-            sam_temp.append((temp.name, sam))
-    return sam_temp
+# cpdef list job(data_tuple, modify_mapq, add_tags):
+#     temp = io_funcs.make_template(*data_tuple)
+#     process_template(temp, add_tags)
+#     sam_temp = []
+#     if temp.passed:
+#         sam = to_output(temp, modify_mapq, add_tags)
+#         if sam:
+#             sam_temp.append((temp.name, sam))
+#     return sam_temp
 
 
 def median(L):
@@ -138,42 +139,41 @@ def insert_size(batch):
     return insert_m, insert_stdev
 
 
-def process_batch(args):
-
-    paired_end, match_score, bias, secondary, min_aln, max_hom, \
-    inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d, \
-    mu, sigma, find_insert_size, add_tags, modify_mapq, batch = args
-
-    batch = [make_template(rows, last_seen_chrom, paired_end, match_score, bias, secondary, min_aln, max_hom,
-                           inter_cost, U, zero_cost_boundary, max_gap_cost) for rows, last_seen_chrom in batch]
-    max_d = default_max_d
-    insert = mu
-    insert_std = sigma
-
-    res = bytearray(''.encode('ascii'))
-    if find_insert_size:
-        insert, insert_std = insert_size(batch)
-        max_d = insert + (4 * insert_std)
-
-    for temp in batch:
-
-        if max_d != default_max_d:
-            temp.max_d = max_d
-        temp.max_d = max_d
-        temp.mu = insert
-        temp.sigma = insert_std
-
-        process_template(temp, add_tags)
-
-        if temp.passed:
-            sam = to_output(temp, modify_mapq, add_tags)
-            if sam:
-                byte_string = sam_to_str(temp.name, sam).encode('ascii')
-                res.extend(byte_string)
-
-    byte_string = bytes(res)
-    return byte_string
-
+# def process_batch(args):
+#
+#     paired_end, match_score, bias, secondary, min_aln, max_hom, \
+#     inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d, \
+#     mu, sigma, find_insert_size, add_tags, modify_mapq, batch = args
+#
+#     batch = [make_template(rows, last_seen_chrom, paired_end, match_score, bias, secondary, min_aln, max_hom,
+#                            inter_cost, U, zero_cost_boundary, max_gap_cost) for rows, last_seen_chrom in batch]
+#     max_d = default_max_d
+#     insert = mu
+#     insert_std = sigma
+#
+#     res = bytearray(''.encode('ascii'))
+#     if find_insert_size:
+#         insert, insert_std = insert_size(batch)
+#         max_d = insert + (4 * insert_std)
+#
+#     for temp in batch:
+#
+#         if max_d != default_max_d:
+#             temp.max_d = max_d
+#         temp.max_d = max_d
+#         temp.mu = insert
+#         temp.sigma = insert_std
+#
+#         process_template(temp, add_tags)
+#
+#         if temp.passed:
+#             sam = to_output(temp, modify_mapq, add_tags)
+#             if sam:
+#                 byte_string = sam_to_str(temp.name, sam).encode('ascii')
+#                 res.extend(byte_string)
+#
+#     byte_string = bytes(res)
+#     return byte_string
 
 
 def process_reads(args):
@@ -185,7 +185,6 @@ def process_reads(args):
         insert_std = args["template_size"].split(",")
         args["insert_median"] = float(insert_std[0])
         args["insert_stdev"] = float(insert_std[1])
-
 
     if not args["include"]:
         args["bias"] = 1.0
@@ -208,33 +207,39 @@ def process_reads(args):
     version = pkg_resources.require("dodi")[0].version
     itr = io_funcs.iterate_mappings(args, version)
 
-    cdef float match_score = args["match_score"]
-    cdef float mu = args["insert_median"]
-    cdef float sigma = args["insert_stdev"]
-    cdef float min_aln = args["min_aln"]
-    cdef float max_hom = args["max_overlap"]
-    cdef float inter_cost = args["inter_cost"]
-    cdef float U = args["u"]
-    cdef float zero_cost_boundary = args["zero_cost_boundary"]
-    cdef float max_gap_cost = args["max_gap_cost"]
-    cdef bint paired_end = int(args["paired"])
-    cdef float bias = args["bias"]
-    cdef bint secondary = args['secondary']
+    params = Params(args)
 
-    cdef float default_max_d = mu + (4*sigma) # Separation distance threshold to call a pair discordant
+    # cdef float match_score = args["match_score"]
+    # cdef float mu = args["insert_median"]
+    # cdef float sigma = args["insert_stdev"]
+    # cdef float min_aln = args["min_aln"]
+    # cdef float max_hom = args["max_overlap"]
+    # cdef float inter_cost = args["inter_cost"]
+    # cdef float U = args["u"]
+    # cdef float zero_cost_boundary = args["zero_cost_boundary"]
+    # cdef float max_gap_cost = args["max_gap_cost"]
+    # cdef float ins_cost = args['ins_cost']
+    # cdef float ol_cost = args['ol_cost']
 
-    cdef bint find_insert_size = True
-    if not args['paired']:
-        find_insert_size = False
+    # cdef bint paired_end = int(args["paired"])
+    # cdef float bias = args["bias"]
+    # cdef bint secondary = args['secondary']
 
-    modify_mapq = args['modify_mapq']
-    add_tags = args['tags']
+    # cdef float default_max_d = mu + (4*sigma) # Separation distance threshold to call a pair discordant
+
+    # cdef bint find_insert_size = True
+    # if not args['paired']:
+    #     find_insert_size = False
+    #
+    # modify_mapq = args['modify_mapq']
+    # add_tags = args['tags']
+
     n_jobs = args['procs']
 
     cdef char* to_write
     cdef bytes byte_string
 
-    if paired_end:
+    if params.paired_end:
         batch_size = 10_000
     else:
         batch_size = 10
@@ -253,32 +258,35 @@ def process_reads(args):
 
             count += 1
 
-            temp = make_template(rows, last_seen_chrom, paired_end, match_score, bias, secondary, min_aln, max_hom,
-                                 inter_cost, U, zero_cost_boundary, max_gap_cost)
+            temp = make_template(rows, last_seen_chrom)  #, paired_end, match_score, bias, secondary, min_aln, max_hom,
+                                 # inter_cost, U, zero_cost_boundary, max_gap_cost)
 
             if len(batch) < batch_size:
                 batch.append(temp)
             else:
                 # process one batch
-                max_d = default_max_d
-                insert = mu
-                insert_std = sigma
+                max_d = params.default_max_d
+                insert = params.mu
+                insert_std = params.sigma
 
-                if find_insert_size:
+                if params.find_insert_size:
                     insert, insert_std = insert_size(batch)
                     max_d = insert + (4 * insert_std)
+                    params.mu = insert
+                    params.sigma = insert_std
+                    params.default_max_d = max_d
 
                 for temp in batch:
-                    if max_d != default_max_d:
-                        temp.max_d = max_d
-                    temp.max_d = max_d
-                    temp.mu = insert
-                    temp.sigma = insert_std
+                    # if max_d != params.default_max_d:
+                    #     params.default_max_d = max_d
+                    # temp.max_d = max_d
+                    # temp.mu = insert
+                    # temp.sigma = insert_std
 
-                    process_template(temp, add_tags)
+                    process_template(temp, params)
 
                     if temp.passed:
-                        sam = to_output(temp, modify_mapq, add_tags)
+                        sam = to_output(temp, params)
                         if sam:
                             byte_string = sam_to_str(temp.name, sam).encode('ascii')
                             to_write = byte_string
@@ -288,24 +296,27 @@ def process_reads(args):
 
         if len(batch) > 0:
 
-            max_d = default_max_d
-            insert = mu
-            insert_std = sigma
-            if find_insert_size:
+            max_d = params.default_max_d
+            insert = params.mu
+            insert_std = params.sigma
+            if params.find_insert_size:
                 insert, insert_std = insert_size(batch)
                 max_d = insert + (4 * insert_std)
+                params.mu = insert
+                params.sigma = insert_std
+                params.default_max_d = max_d
 
             for temp in batch:
 
-                if max_d != default_max_d:
-                    temp.max_d = max_d
-                temp.max_d = max_d
-                temp.mu = insert
-                temp.sigma = insert_std
+                # if max_d != params.default_max_d:
+                #     temp.max_d = max_d
+                # temp.max_d = max_d
+                # temp.mu = insert
+                # temp.sigma = insert_std
 
-                process_template(temp, add_tags)
+                process_template(temp, params)
                 if temp.passed:
-                    sam = to_output(temp, modify_mapq, add_tags)
+                    sam = to_output(temp, params)
                     if sam:
                         byte_string = sam_to_str(temp.name, sam).encode('ascii')
                         to_write = byte_string
@@ -313,59 +324,59 @@ def process_reads(args):
 
             batch = []
 
-    else:
-
-        header_string = next(itr)
-
-        byte_string = header_string.encode('ascii')
-        to_write = byte_string
-        fputs(to_write, outsam)
-
-        with closing(multiprocessing.Pool(n_jobs)) as p:
-
-            jobs = []
-            batch = []
-            for rows, last_seen_chrom in itr:
-
-                count += 1
-
-                data = (rows, last_seen_chrom)
-
-                if len(batch) < batch_size:
-                    batch.append(data)
-
-                else:
-                    if len(jobs) < n_jobs:
-                        jobs.append(batch)
-                        batch = []
-                    else:
-                        batch = [(paired_end, match_score, bias, secondary, min_aln, max_hom,
-                                  inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d,
-                                  mu, sigma, find_insert_size, add_tags, modify_mapq, j) for j in jobs]
-
-
-                        res = p.map(process_batch, batch)
-                        for byte_string in res:
-                            to_write = byte_string
-                            fputs(to_write, outsam)
-                        batch = []
-                        jobs = []
-                        gc.collect()
-
-            if len(batch) > 0 or len(jobs) > 0:
-
-                jobs.append(batch)
-                batch = [(paired_end, match_score, bias, secondary, min_aln, max_hom,
-                          inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d,
-                          mu, sigma, find_insert_size, add_tags, modify_mapq, j) for j in jobs]
-
-                # with multiprocessing.Pool(n_jobs) as p:
-                res = p.map(process_batch, batch)
-                for byte_string in res:
-                    to_write = byte_string
-                    fputs(to_write, outsam)
-                batch = []
-                jobs = []
+    # else:
+    #
+    #     header_string = next(itr)
+    #
+    #     byte_string = header_string.encode('ascii')
+    #     to_write = byte_string
+    #     fputs(to_write, outsam)
+    #
+    #     with closing(multiprocessing.Pool(n_jobs)) as p:
+    #
+    #         jobs = []
+    #         batch = []
+    #         for rows, last_seen_chrom in itr:
+    #
+    #             count += 1
+    #
+    #             data = (rows, last_seen_chrom)
+    #
+    #             if len(batch) < batch_size:
+    #                 batch.append(data)
+    #
+    #             else:
+    #                 if len(jobs) < n_jobs:
+    #                     jobs.append(batch)
+    #                     batch = []
+    #                 else:
+    #                     batch = [(paired_end, match_score, bias, secondary, min_aln, max_hom,
+    #                               inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d,
+    #                               mu, sigma, find_insert_size, add_tags, modify_mapq, j) for j in jobs]
+    #
+    #
+    #                     res = p.map(process_batch, batch)
+    #                     for byte_string in res:
+    #                         to_write = byte_string
+    #                         fputs(to_write, outsam)
+    #                     batch = []
+    #                     jobs = []
+    #                     gc.collect()
+    #
+    #         if len(batch) > 0 or len(jobs) > 0:
+    #
+    #             jobs.append(batch)
+    #             batch = [(paired_end, match_score, bias, secondary, min_aln, max_hom,
+    #                       inter_cost, U, zero_cost_boundary, max_gap_cost, default_max_d,
+    #                       mu, sigma, find_insert_size, add_tags, modify_mapq, j) for j in jobs]
+    #
+    #             # with multiprocessing.Pool(n_jobs) as p:
+    #             res = p.map(process_batch, batch)
+    #             for byte_string in res:
+    #                 to_write = byte_string
+    #                 fputs(to_write, outsam)
+    #             batch = []
+    #             jobs = []
 
     fclose(outsam)
 

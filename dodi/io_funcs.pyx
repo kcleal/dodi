@@ -45,23 +45,50 @@ def from_dict(self, d):
     return self
 
 
+cdef class Params:
+    def __init__(self, args):
+        self.match_score = args["match_score"]
+        self.mu = args["insert_median"]
+        self.sigma = args["insert_stdev"]
+        self.min_aln = args["min_aln"]
+        self.max_homology = args["max_overlap"]
+        self.inter_cost = args["inter_cost"]
+        self.U = args["u"]
+        # cdef float zero_cost_boundary = args["zero_cost_boundary"]
+        # cdef float max_gap_cost = args["max_gap_cost"]
+        self.ins_cost = args['ins_cost']
+        self.ol_cost = args['ol_cost']
+
+        self.paired_end = int(args["paired"])
+        self.bias = args["bias"]
+        self.secondary = args['secondary']
+
+        self.default_max_d = self.mu + (4 * self.sigma)  # Separation distance threshold to call a pair discordant
+
+        self.find_insert_size = False if not args['paired'] else True
+        self.modify_mapq = args['modify_mapq']
+        self.add_tags = args['tags']
+
+
 cdef class Template:
-    def __init__(self, rows, last_seen_chrom, paired_end, match_score, bias,
-                         secondary, min_aln, max_hom, inter_cost, U, zero_cost_boundary, max_gap_cost):
+    def __init__(self, rows, last_seen_chrom): # , paired_end, match_score, bias,
+                         # secondary, min_aln, max_hom, inter_cost, U, zero_cost_boundary, max_gap_cost):
 
-        self.match_score = match_score
+        # self.match_score = match_score
+        #
+        # self.min_aln = min_aln
+        # self.max_homology = max_hom
+        # self.inter_cost = inter_cost
+        # self.U = U
+        # self.zero_cost_bound = zero_cost_boundary
+        # self.max_gap_cost = max_gap_cost
+        #
+        # self.paired_end = paired_end
+        # self.bias = bias
+        # self.secondary = secondary
 
-        self.min_aln = min_aln
-        self.max_homology = max_hom
-        self.inter_cost = inter_cost
-        self.U = U
-        self.zero_cost_bound = zero_cost_boundary
-        self.max_gap_cost = max_gap_cost
-
-        self.paired_end = paired_end
         self.inputdata = rows
 
-        self.bias = bias
         self.read1_length = 0
         self.read2_length = 0
         self.score_mat = {}
@@ -72,24 +99,26 @@ cdef class Template:
         self.read2_seq = ""
         self.read1_q = ""
         self.read2_q = "",
+        self.outstr = ""
         self.read1_reverse = False  # Set to true if aligner has reverse complemented the sequence
         self.read2_reverse = False
         self.read1_unmapped = False
         self.read2_unmapped = False
-        self.secondary = secondary
+
         self.first_read2_index = 0
 
     def __repr__(self):
         return str(to_dict(self))
 
 
-cpdef Template make_template(rows, last_seen_chrom, bint paired_end, float match_score, float bias,
-                         bint secondary, float min_aln, float max_hom, float inter_cost, float U,
-                             float zero_cost_boundary, float max_gap_cost):
+cpdef Template make_template(rows, last_seen_chrom):
+                             # bint paired_end, float match_score, float bias,
+                         # bint secondary, float min_aln, float max_hom, float inter_cost, float U,
+                         #     float zero_cost_boundary, float max_gap_cost):
 
-    return Template(rows, last_seen_chrom, paired_end, match_score, bias,
-                    secondary, min_aln=min_aln, max_hom=max_hom, inter_cost=inter_cost,
-                    U=U, zero_cost_boundary=zero_cost_boundary, max_gap_cost=max_gap_cost)
+    return Template(rows, last_seen_chrom)  #, paired_end, match_score, bias,
+                    # secondary, min_aln=min_aln, max_hom=max_hom, inter_cost=inter_cost,
+                    # U=U, zero_cost_boundary=zero_cost_boundary, max_gap_cost=max_gap_cost)
 
 
 def sam_to_str(template_name, sam):
@@ -342,7 +371,7 @@ cdef tuple check_for_good_pairing(template, add_tags):
     return r1, r2
 
 
-cpdef int sam_to_array(template, add_tags) except -1:
+cpdef int sam_to_array(template, params) except -1:
     # Expect read1 and read2 alignments to be concatenated, not mixed together
     data, overlaps = list(zip(*template.inputdata))
 
@@ -350,8 +379,8 @@ cpdef int sam_to_array(template, add_tags) except -1:
     template.inputdata = [i[1:-1] + i[-1].strip().split("\t") for i in data]
 
     # If only one alignment for read1 and read2, no need to try pairing, just send sam to output
-    if template.paired_end and len(data) == 2:
-        pair_str = check_for_good_pairing(template, add_tags)
+    if params.paired_end and len(data) == 2:
+        pair_str = check_for_good_pairing(template, params.add_tags)
 
         if pair_str:
             template.passed = 1
@@ -369,7 +398,7 @@ cpdef int sam_to_array(template, add_tags) except -1:
     cdef int cc = 0
     cdef int idx, pos, flag, seq_len, query_start, query_end, start_temp
     cdef str chromname, cigar, k, t, v
-    cdef float bias = template.bias
+    cdef float bias = params.bias
 
     cdef int read1_strand_set, read2_strand_set, current_l
     cdef int first_read2_index = len(template.inputdata) + 1
@@ -427,7 +456,7 @@ cpdef int sam_to_array(template, add_tags) except -1:
 
         current_l = len(l[9])
 
-        if template.paired_end:
+        if params.paired_end:
 
             if flag & 64 and read1_set < current_l and len(l[8]) > 1:  # First in pair
                 template.read1_seq = l[8]
@@ -457,10 +486,13 @@ cpdef int sam_to_array(template, add_tags) except -1:
             query_start = 0  # Unmapped read? no cigar
             query_end = 0
         else:
+
             query_start, query_end, template_length = get_start_end(cigar)
+            # if pos == 7553770 or pos == 134751765:
+            #     echo(pos, query_start, query_end, cigar)
 
             # If current alignment it not primary, and on different strand from primary, count from other end
-            if template.paired_end:
+            if params.paired_end:
                 if flag & 64 and template.read1_reverse != bool(flag & 16):  # First in pair, read1_rev != read_rev
                     start_temp = template.read1_length - query_end
                     query_end = start_temp + query_end - query_start
@@ -471,7 +503,8 @@ cpdef int sam_to_array(template, add_tags) except -1:
                     query_end = start_temp + query_end - query_start
                     query_start = start_temp
 
-            if not template.paired_end:
+            # if not template.paired_end:
+            else:
                 if template.read1_length == 0:
                     if template_length == 0:
                         template_length = len(l[8])  # if length from cigar failed, use seq length
@@ -489,11 +522,12 @@ cpdef int sam_to_array(template, add_tags) except -1:
         arr[idx, 2] = query_start
         arr[idx, 3] = query_end
 
-    if first_read2_index == len(arr) + 1:
-        template.paired_end = 0
+    # todo is this needed?
+    # if first_read2_index == len(arr) + 1:
+    #     template.paired_end = 0
 
     cdef int j
-    if template.paired_end:  # Increment the contig position of read 2
+    if params.paired_end:  # Increment the contig position of read 2
         for j in range(first_read2_index, len(arr)):
             if arr[j, 7] == 2:  # Second in pair
                 arr[j, 2] += template.read1_length
@@ -518,8 +552,8 @@ cpdef void choose_supplementary(template):
     cdef int i = 0
     cdef int row_idx
 
-    primary_1 = None
-    primary_2 = None
+    primary_1 = -1
+    primary_2 = -1
 
     cdef double[:, :] data_table = template.data_ori
     cdef long[:] rows = template.rows

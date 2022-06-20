@@ -11,7 +11,7 @@ import numpy as np
 cimport numpy as np
 from libc.math cimport exp, log, sqrt, fabs
 from libcpp.vector cimport vector
-from dodi.io_funcs cimport Template
+from dodi.io_funcs cimport Template, Params
 import time
 from sys import stderr
 
@@ -112,14 +112,15 @@ cdef tuple optimal_path(double[:, :] segments,
                         # float max_insertion,
                         float min_aln,
                         float max_homology,
-                        # float ins_cost,
-                        # float hom_cost,
+                        float ins_cost, #
+                        float hom_cost, #
                         float inter_cost,
                         float U,
                         float match_score,
-                        float zero_cost_bound,
-                        float max_gap_cost,
-                        int paired_end
+                        # float zero_cost_bound,
+                        # float max_gap_cost,
+                        int paired_end,
+                        # debug=None
                         ):
     # print(np.asarray(segments), file=stderr)
     # Start at first node then start another loop running backwards through the preceeding nodes.
@@ -139,9 +140,13 @@ cdef tuple optimal_path(double[:, :] segments,
                micro_h, ins, best_score, next_best_score, best_normal_orientation, current_score, total_cost,\
                S, sc, max_s, path_score, jump_cost, distance
 
+    # ins_cost = 1 # 0.1
+    # hom_cost = 1. #1
+
     # Deal with first score
     for i in range(segments.shape[0]):
-        node_scores[i] = segments[i, 4] #- (segments[i, 2] * ins_cost)  # segments[i, 4] #
+        #node_scores[i] = segments[i, 4] #- (segments[i, 2] * ins_cost)  # segments[i, 4] #
+        node_scores[i] = segments[i, 4] - (segments[i, 2] * ins_cost)
 
     pred.fill(-1)
     nb_node_scores.fill(-1e6)  # Must set to large negative, otherwise a value of zero can imply a path to that node
@@ -153,7 +158,10 @@ cdef tuple optimal_path(double[:, :] segments,
     # adj = [Heap2() for _ in range(len(segments))]
     cdef float nearest_start, nearest_end
     # start from segment two because the first has been scored
-    cdef int ins_cost = 1
+
+    # print(np.asarray(segments[0]).astype(int), file=stderr)
+    # print(np.asarray(segments[segments.shape[0]-1]).astype(int), file=stderr)
+
     for i in range(1, segments.shape[0]):
 
         chr1 = segments[i, 0]
@@ -171,6 +179,7 @@ cdef tuple optimal_path(double[:, :] segments,
 
         nearest_start = 100_000_000_000
         nearest_end = -1
+
         # Walking backwards
         for j in range(i-1, -1, -1):
             chr2 = segments[j, 0]
@@ -183,17 +192,20 @@ cdef tuple optimal_path(double[:, :] segments,
             r2 = segments[j, 7]
 
             # Allow alignments with minimum sequence and max overlap
-            if start1 > max(end2 - max_homology, start2) and end1 > end2 + min_aln and start1 - start2 > min_aln:
-
+            #if start1 > max(end2 - max_homology, start2) and end1 > end2 + min_aln and start1 - start2 > min_aln:
+            if start1 > end2 - max_homology and end1 - end2 > min_aln:
                 # if start1 > end2 and start1 - end2 > max_insertion:
                 #     break  # alignments are sorted by query start, - query end
 
-                if end2 > nearest_end and start2 < nearest_start:
-                    nearest_start = start2
-                    nearest_end = end2
+                # if end2 > nearest_end and start2 < nearest_start:
+                #     nearest_start = start2
+                #     nearest_end = end2
+                #
+                # elif end2 < nearest_start:
+                #     break
 
-                elif end2 < nearest_start:
-                    break
+
+
                 # Microhomology and insertion lengths between alignments on same read only
                 micro_h = 0
                 ins = 0
@@ -222,23 +234,38 @@ cdef tuple optimal_path(double[:, :] segments,
                 else:
                     jump_cost = inter_cost + U
 
-                total_cost2 = jump_cost
-                if r1 == r2:
-                    if micro_h:
-                        total_cost2 += (micro_h * match_score) + (step(zero_cost_bound, max_gap_cost, micro_h))
-                    elif ins:
-                        total_cost2 += step(zero_cost_bound, max_gap_cost, ins)
+                # total_cost2 = jump_cost
+                # if r1 == r2:
+                #     if micro_h:
+                #         total_cost2 += (micro_h * match_score) + (step(zero_cost_bound, max_gap_cost, micro_h))
+                #     elif ins:
+                #         total_cost2 += step(zero_cost_bound, max_gap_cost, ins)
+
+                # if debug:
+                #     print((j, i, pos2, pos1),
+                #           micro_h, ins, step(zero_cost_bound, max_gap_cost, ins),
+                #           file=stderr)
                         # total_cost = 0
                 # Calculate score, last_score = node_scores[j]
-                # total_cost = (micro_h * hom_cost) + (ins * ins_cost) + jump_cost
-                # S = score1 - total_cost
-                S = score1 - total_cost2  # Score 1 is 'ahead' in the sort order from sc2
+
+                total_cost = (micro_h * hom_cost) + (ins * ins_cost) + jump_cost
+                S = score1 - total_cost # + score2
+                # S = score1  - total_cost2  # Score 1 is 'ahead' in the sort order from sc2
                 # adj[i].add(score2)
+
+                # if pos1 == 134751764: # and pos2 in (4966, 61703471):
+                    # print(np.asarray(segments[i]).astype(int), file=stderr)
+                    # print(np.asarray(segments[j]).astype(int), file=stderr)
+                    # print(pos1, pos2, S, (score1, total_cost, score2), file=stderr)
+
                 current_score = node_scores[j] + S
 
                 # Update best score and next best score
                 if current_score > best_score:
-
+                    # if pos1 == 134751765 or pos1 == 121496299:  # and pos2 in (4966, 61703471):
+                        # print(np.asarray(segments[i]).astype(int), file=stderr)
+                        # print(np.asarray(segments[j]).astype(int), file=stderr)
+                        # print(i, pos1, pos2, S, (score1, total_cost, score2), file=stderr)
                     next_best_score = best_score
                     best_score = current_score
 
@@ -268,6 +295,8 @@ cdef tuple optimal_path(double[:, :] segments,
 
     for i in range(segments.shape[0]):
         node_to_end_cost = node_scores[i] - (ins_cost * (contig_length - segments[i, 3]))
+        # if i == 7120 or i == 7371:
+        #     print(i, node_to_end_cost, file=stderr)
         node_scores[i] = node_to_end_cost  # Need to know for secondary path
 
         if node_to_end_cost > path_score:
@@ -344,6 +373,10 @@ cdef tuple optimal_path(double[:, :] segments,
     if best_normal_orientation < 0:
         best_normal_orientation = 0
 
+    # if debug:
+    #     print(pred.astype(int), file=stderr)
+    #     print(node_scores.astype(int), file=stderr)
+
     return a, path_score, secondary, best_normal_orientation, normal_pairings
 
 
@@ -362,7 +395,7 @@ cdef void add_scores(Template template, long[:] rows, float path_score, float se
     template.score_mat = scores
 
 
-cpdef void process(Template rt):
+cpdef void process(Template rt, Params params):
     """
     Assumes that the reads are ordered read1 then read2, in the FR direction
     :param rt: Read_template object, contains all parameters within the pairing_params array
@@ -374,8 +407,22 @@ cpdef void process(Template rt):
 
     cdef int contig_l = 0
     cdef early_stop = False
-    cdef bint paired_end = rt.paired_end
+    cdef bint paired_end = params.paired_end
     t = np.array(sorted(rt.data_ori, key=sort_func))
+
+    # if rt.name == 'D00360:18:H8VC6ADXX:1:2206:4506:92050':
+    #     debug=True
+    # else:
+    #     debug = False
+
+    cn = {v: k for k, v in rt.chrom_ids.items()}
+    with open('/home/kez/Desktop/dodi_out.csv', 'w') as out:
+        out.write('chrom,pos,query_start,query_end,aln_score,row_index,strand,read,num_mis-matches,original_aln_score\n')
+        for row in t.astype(int):
+            l = list(row)
+            l[0] = cn[l[0]]
+            # print('\t'.join(l), file=stderr)
+            out.write('\t'.join(map(str, l)) + '\n')
 
     if not paired_end:
         if rt.read1_unmapped:
@@ -384,9 +431,10 @@ cpdef void process(Template rt):
 
         single_end = 1
         contig_l = r1_len
-        path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(t, contig_l, rt.mu, rt.sigma, rt.min_aln, rt.max_homology,
-                            rt.inter_cost, rt.U, rt.match_score, rt.zero_cost_bound, rt.max_gap_cost, 0)
+        path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(t, contig_l, params.mu, params.sigma, params.min_aln, params.max_homology,
+                            params.ins_cost, params.ol_cost, params.inter_cost, params.U, params.match_score, 0)  # params.zero_cost_bound, params.max_gap_cost,
         add_scores(rt, path1, length1, second_best1, dis_to_normal1, norm_pairings1)
+
         return
 
     else:
@@ -397,8 +445,8 @@ cpdef void process(Template rt):
         elif rt.read2_unmapped:
             contig_l = r1_len
             read1_arr = t[t[:, 7] == 1]
-            path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(read1_arr, contig_l, rt.mu, rt.sigma, rt.min_aln, rt.max_homology,
-                            rt.inter_cost, rt.U, rt.match_score, rt.zero_cost_bound, rt.max_gap_cost, 1)
+            path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(read1_arr, contig_l, params.mu, params.sigma, params.min_aln, params.max_homology,
+                            params.ins_cost, params.ol_cost, params.inter_cost, params.U, params.match_score, 1)
 
             add_scores(rt, path1, length1, second_best1, dis_to_normal1, norm_pairings1)
             return
@@ -406,21 +454,23 @@ cpdef void process(Template rt):
         elif rt.read1_unmapped:
             contig_l = r2_len
             read2_arr = t[t[:, 7] == 2]
-            path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(read2_arr, contig_l, rt.mu, rt.sigma, rt.min_aln, rt.max_homology,
-                            rt.inter_cost, rt.U, rt.match_score, rt.zero_cost_bound, rt.max_gap_cost, 1)
+            path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(read2_arr, contig_l, params.mu, params.sigma, params.min_aln, params.max_homology,
+                            params.ins_cost, params.ol_cost, params.inter_cost, params.U, params.match_score, 1)
             add_scores(rt, path1, length1, second_best1, dis_to_normal1, norm_pairings1)
             return
 
         else:
             contig_l = r1_len + r2_len
-            path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(t, contig_l, rt.mu, rt.sigma, rt.min_aln, rt.max_homology,
-                            rt.inter_cost, rt.U, rt.match_score, rt.zero_cost_bound, rt.max_gap_cost, 1)
+            path1, length1, second_best1, dis_to_normal1, norm_pairings1 = optimal_path(t, contig_l, params.mu, params.sigma, params.min_aln, params.max_homology,
+                            params.ins_cost, params.ol_cost, params.inter_cost, params.U, params.match_score, 1)
 
             if len(path1) == len(t):
                 early_stop = True
             # if norm_pairings1 and second_best1 == 0:
             #     early_stop = True
-
+            # if debug:
+            #     print(t[:, :6].astype(int), file=stderr)
+            #     print('', file=stderr)
             # if length1 == norm_pairings1 and len(path1) == 2 and length1 - second_best1 > rt.U:
             if early_stop:
                 add_scores(rt, path1, length1, second_best1, dis_to_normal1, norm_pairings1)
@@ -431,9 +481,12 @@ cpdef void process(Template rt):
             t[rt.first_read2_index:, 2:4] -= r1_len
             t = t[(-t[:, 7]).argsort(kind='stablesort')]
 
-            path2, length2, second_best2, dis_to_normal2, norm_pairings2 = optimal_path(t, contig_l, rt.mu, rt.sigma, rt.min_aln, rt.max_homology,
-                            rt.inter_cost, rt.U, rt.match_score, rt.zero_cost_bound, rt.max_gap_cost, 1)
+            path2, length2, second_best2, dis_to_normal2, norm_pairings2 = optimal_path(t, contig_l, params.mu, params.sigma, params.min_aln, params.max_homology,
+                            params.ins_cost, params.ol_cost, params.inter_cost, params.U, params.match_score, 1)
 
+            # if debug:
+            #     print(t[:, :6].astype(int), file=stderr)
+            #     print(path1, path2, length1, length2, file=stderr)
             if length2 > length1:
                 add_scores(rt, path2, length2, second_best2, dis_to_normal2, norm_pairings2)
                 return
