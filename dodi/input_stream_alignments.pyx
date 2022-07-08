@@ -3,18 +3,13 @@
 
 from __future__ import absolute_import
 import multiprocessing
-import sys
 import pkg_resources
 import click
 import time
 import datetime
-import pickle
 import numpy as np
-from sys import stderr
 import logging
-import gc
-from contextlib import closing
-from dataclasses import dataclass
+
 
 from . import pairing, io_funcs, samclips
 from dodi.io_funcs import make_template, sam_to_str
@@ -198,9 +193,8 @@ def process_reads(args):
     else:
         filename_byte_string = args["output"].encode("UTF-8")
         fname = filename_byte_string
-        outsam = fopen(fname, "rb") #open(args["output"], "w")
+        outsam = fopen(fname, "rb")
 
-    #
     #
     count = 0
 
@@ -208,31 +202,6 @@ def process_reads(args):
     itr = io_funcs.iterate_mappings(args, version)
 
     params = Params(args)
-
-    # cdef float match_score = args["match_score"]
-    # cdef float mu = args["insert_median"]
-    # cdef float sigma = args["insert_stdev"]
-    # cdef float min_aln = args["min_aln"]
-    # cdef float max_hom = args["max_overlap"]
-    # cdef float inter_cost = args["inter_cost"]
-    # cdef float U = args["u"]
-    # cdef float zero_cost_boundary = args["zero_cost_boundary"]
-    # cdef float max_gap_cost = args["max_gap_cost"]
-    # cdef float ins_cost = args['ins_cost']
-    # cdef float ol_cost = args['ol_cost']
-
-    # cdef bint paired_end = int(args["paired"])
-    # cdef float bias = args["bias"]
-    # cdef bint secondary = args['secondary']
-
-    # cdef float default_max_d = mu + (4*sigma) # Separation distance threshold to call a pair discordant
-
-    # cdef bint find_insert_size = True
-    # if not args['paired']:
-    #     find_insert_size = False
-    #
-    # modify_mapq = args['modify_mapq']
-    # add_tags = args['tags']
 
     n_jobs = args['procs']
 
@@ -258,8 +227,7 @@ def process_reads(args):
 
             count += 1
 
-            temp = make_template(rows, last_seen_chrom)  #, paired_end, match_score, bias, secondary, min_aln, max_hom,
-                                 # inter_cost, U, zero_cost_boundary, max_gap_cost)
+            temp = make_template(rows, last_seen_chrom)
 
             if len(batch) < batch_size:
                 batch.append(temp)
@@ -277,14 +245,7 @@ def process_reads(args):
                     params.default_max_d = max_d
 
                 for temp in batch:
-                    # if max_d != params.default_max_d:
-                    #     params.default_max_d = max_d
-                    # temp.max_d = max_d
-                    # temp.mu = insert
-                    # temp.sigma = insert_std
-
                     process_template(temp, params)
-
                     if temp.passed:
                         sam = to_output(temp, params)
                         if sam:
@@ -307,13 +268,6 @@ def process_reads(args):
                 params.default_max_d = max_d
 
             for temp in batch:
-
-                # if max_d != params.default_max_d:
-                #     temp.max_d = max_d
-                # temp.max_d = max_d
-                # temp.mu = insert
-                # temp.sigma = insert_std
-
                 process_template(temp, params)
                 if temp.passed:
                     sam = to_output(temp, params)

@@ -122,7 +122,8 @@ cdef tuple optimal_path(double[:, :] segments,
                         int paired_end,
                         # debug=None
                         ):
-    # print(np.asarray(segments), file=stderr)
+
+    # print(mu, sigma, contig_length, min_aln, max_homology, ins_cost, hom_cost, inter_cost, match_score, paired_end, file=stderr)
     # Start at first node then start another loop running backwards through the preceeding nodes.
     # Choose the best score out of the in edges.
     # Use a special start and end node to score the first and last alignments
@@ -155,12 +156,9 @@ cdef tuple optimal_path(double[:, :] segments,
     next_best_score = 0
     best_normal_orientation = 0  # Keep track of the best normal pairing score, F first R second
     normal_end_index = -1  # Keep track of the last normal-index for updating the normal-score later on
-    # adj = [Heap2() for _ in range(len(segments))]
+
     cdef float nearest_start, nearest_end
     # start from segment two because the first has been scored
-
-    # print(np.asarray(segments[0]).astype(int), file=stderr)
-    # print(np.asarray(segments[segments.shape[0]-1]).astype(int), file=stderr)
 
     for i in range(1, segments.shape[0]):
 
@@ -262,10 +260,10 @@ cdef tuple optimal_path(double[:, :] segments,
 
                 # Update best score and next best score
                 if current_score > best_score:
-                    # if pos1 == 134751765 or pos1 == 121496299:  # and pos2 in (4966, 61703471):
-                        # print(np.asarray(segments[i]).astype(int), file=stderr)
-                        # print(np.asarray(segments[j]).astype(int), file=stderr)
-                        # print(i, pos1, pos2, S, (score1, total_cost, score2), file=stderr)
+                #     if pos1 == 83232401 or pos2 == 83232401:
+                #         print(np.asarray(segments[i]).astype(int), file=stderr)
+                #         print(np.asarray(segments[j]).astype(int), file=stderr)
+                #         print(i, j, pos1, pos2, current_score, best_score, file=stderr)
                     next_best_score = best_score
                     best_score = current_score
 
@@ -373,7 +371,7 @@ cdef tuple optimal_path(double[:, :] segments,
     if best_normal_orientation < 0:
         best_normal_orientation = 0
 
-    # if debug:
+    # if True: #debug:
     #     print(pred.astype(int), file=stderr)
     #     print(node_scores.astype(int), file=stderr)
 
@@ -421,13 +419,14 @@ cpdef void process(Template rt, Params params):
         for row in t.astype(int):
             l = list(row)
             l[0] = cn[l[0]]
-            # print('\t'.join(l), file=stderr)
             out.write('\t'.join(map(str, l)) + '\n')
 
     if not paired_end:
         if rt.read1_unmapped:
             add_scores(rt, np.array([0]).astype(np.float), 0, 0, 125, 0)
             return
+
+        # print(t[:20, :6].astype(int), file=stderr)
 
         single_end = 1
         contig_l = r1_len
@@ -468,10 +467,7 @@ cpdef void process(Template rt, Params params):
                 early_stop = True
             # if norm_pairings1 and second_best1 == 0:
             #     early_stop = True
-            # if debug:
-            #     print(t[:, :6].astype(int), file=stderr)
-            #     print('', file=stderr)
-            # if length1 == norm_pairings1 and len(path1) == 2 and length1 - second_best1 > rt.U:
+
             if early_stop:
                 add_scores(rt, path1, length1, second_best1, dis_to_normal1, norm_pairings1)
                 return

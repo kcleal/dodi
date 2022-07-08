@@ -68,6 +68,13 @@ cdef class Params:
         self.find_insert_size = False if not args['paired'] else True
         self.modify_mapq = args['modify_mapq']
         self.add_tags = args['tags']
+    def __repr__(self):
+        return ', '.join([f'{k}={v}' for k, v in {'match_score': self.match_score, 'mu': self.mu, 'sigma': self.sigma, 'min_aln': self.min_aln,
+                'max_homology': self.max_homology, 'inter_cost': self.inter_cost, 'u': self.U, 'ins_cost': self.ins_cost,
+                'ol_cost': self.ol_cost, 'paired_end': self.paired_end, 'bias': self.bias, 'secondary': self.secondary,
+                'default_max_d': self.default_max_d, 'find_insert_size': self.find_insert_size, 'modify_mapq': self.modify_mapq,
+                'add_tags': self.add_tags
+        }.items()])
 
 
 cdef class Template:
@@ -454,7 +461,7 @@ cpdef int sam_to_array(template, params) except -1:
                 else:
                     arr[idx, 4] = float(v)
 
-        current_l = len(l[9])
+        current_l = len(l[8])
 
         if params.paired_end:
 
@@ -475,7 +482,7 @@ cpdef int sam_to_array(template, params) except -1:
                     template.read2_reverse = 1 if flag & 16 else 0
 
         else:
-            if template.read1_seq == 0 and not (flag & 256) and (len(l[8]) > 1) and read1_set < current_l:
+            if not flag & 256 and len(l[8]) > 1 and read1_set < current_l:
                 template.read1_seq = l[8]
                 template.read1_q = l[9]
                 template.read1_length = len(l[8])
@@ -488,8 +495,6 @@ cpdef int sam_to_array(template, params) except -1:
         else:
 
             query_start, query_end, template_length = get_start_end(cigar)
-            # if pos == 7553770 or pos == 134751765:
-            #     echo(pos, query_start, query_end, cigar)
 
             # If current alignment it not primary, and on different strand from primary, count from other end
             if params.paired_end:
@@ -503,16 +508,15 @@ cpdef int sam_to_array(template, params) except -1:
                     query_end = start_temp + query_end - query_start
                     query_start = start_temp
 
-            # if not template.paired_end:
             else:
-                if template.read1_length == 0:
-                    if template_length == 0:
-                        template_length = len(l[8])  # if length from cigar failed, use seq length
-                        if template_length <= 1:
-                            echo('Could not infer template length')
-                            return -1
-                            # raise ValueError('Could not infer template length')
-                    template.read1_length = template_length
+                # if template.read1_length == 0:
+                if template_length == 0:
+                    template_length = len(l[8])  # if length from cigar failed, use seq length
+                    if template_length <= 1:
+                        echo('Could not infer template length')
+                        return -1
+                        # raise ValueError('Could not infer template length')
+                template.read1_length = template_length
 
                 if flag & 16:  # Single end Reverse strand, count from end
                     start_temp = template.read1_length - query_end
@@ -522,6 +526,9 @@ cpdef int sam_to_array(template, params) except -1:
         arr[idx, 2] = query_start
         arr[idx, 3] = query_end
 
+    # if template.name == '01726306-45be-4337-bf31-c1b71083d2e9.21q1F_False':
+    #     echo('Hiiii')
+    #     echo(len(template.read1_seq))
     # todo is this needed?
     # if first_read2_index == len(arr) + 1:
     #     template.paired_end = 0
