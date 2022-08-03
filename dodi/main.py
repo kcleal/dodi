@@ -24,9 +24,9 @@ defaults = {"paired": "True",
             "max_insertion": 150,
             "min_aln": 10,
 
-            "max_overlap": 150,
+            "max_overlap": 5000,
             "ins_cost": 0.1,
-            "ol_cost": 1,
+            "ol_cost": 2,
 
             "zero_cost_boundary": 0,
             "max_gap_cost": 100,
