@@ -101,6 +101,7 @@ def dodi_aligner(**kwargs):
         rootLogger.setLevel(logging.NOTSET)
 
     show_params()
+    print('dodi parameters', kwargs, file=sys.stderr)
     kwargs['u'] = kwargs['pairing_cost']
     kwargs['paired'] = kwargs['paired'] == 'True'
     kwargs['modify_mapq'] = not kwargs['keep_mapq']

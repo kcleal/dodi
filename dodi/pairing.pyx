@@ -250,11 +250,11 @@ cdef tuple optimal_path(double[:, :] segments,
                 S = score1 - total_cost # + score2
                 # S = score1  - total_cost2  # Score 1 is 'ahead' in the sort order from sc2
                 # adj[i].add(score2)
-
-                # if pos1 == 134751764: # and pos2 in (4966, 61703471):
-                    # print(np.asarray(segments[i]).astype(int), file=stderr)
-                    # print(np.asarray(segments[j]).astype(int), file=stderr)
-                    # print(pos1, pos2, S, (score1, total_cost, score2), file=stderr)
+                # print(pos1, file=stderr)
+                # if pos2 == 171980632 and pos1 in (171980628, ):
+                #     print(np.asarray(segments[i]).astype(int), file=stderr)
+                #     print(np.asarray(segments[j]).astype(int), file=stderr)
+                #     print(pos1, pos2, S, (score1, total_cost, score2), file=stderr)
 
                 current_score = node_scores[j] + S
 
@@ -414,12 +414,13 @@ cpdef void process(Template rt, Params params):
     #     debug = False
 
     cn = {v: k for k, v in rt.chrom_ids.items()}
-    with open('/home/kez/Desktop/dodi_out.csv', 'w') as out:
-        out.write('chrom,pos,query_start,query_end,aln_score,row_index,strand,read,num_mis-matches,original_aln_score\n')
-        for row in t.astype(int):
-            l = list(row)
-            l[0] = cn[l[0]]
-            out.write('\t'.join(map(str, l)) + '\n')
+
+    # with open('/home/kez/Desktop/dodi_out.csv', 'w') as out:
+    #     out.write('chrom,pos,query_start,query_end,aln_score,row_index,strand,read,num_mis-matches,original_aln_score\n')
+    #     for row in t.astype(int):
+    #         l = list(row)
+    #         l[0] = cn[l[0]]
+    #         out.write('\t'.join(map(str, l)) + '\n')
 
     if not paired_end:
         if rt.read1_unmapped:
