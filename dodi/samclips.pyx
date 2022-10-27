@@ -606,7 +606,10 @@ cpdef list fixsam(template, params):
         out = set_tlen(out)
 
     else:
+        pri_is_reverse = bool(primary1[0] & 16)
         for i in range(len(out)):
+            if bool(out[i][1][0] & 16) != pri_is_reverse:
+                out[i][2] = True
             set_supp_flag_single(out[i][1], primary1)
         out = [('pri', primary1, rev_A)] + out
 

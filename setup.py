@@ -75,7 +75,7 @@ for item in ["io_funcs", "input_stream_alignments", "pairing", "samclips"]:
 print("Found packages", find_packages(where="."))
 setup(
     name="dodi",
-    version='0.4.2',
+    version='0.4.3',
     python_requires='>=3.7',
     install_requires=[
             'cython',
