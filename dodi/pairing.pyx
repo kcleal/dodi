@@ -321,6 +321,8 @@ cdef tuple optimal_path(double[:, :] segments,
     cdef int path_length
     cdef int current_i
 
+    cdef size_t size_v
+
     if paired_end:
         # do one pass to get path length, then another to fill path array
         path_length = 0
@@ -360,9 +362,10 @@ cdef tuple optimal_path(double[:, :] segments,
                 if (last_i, next_i) in normal_jumps:
                     normal_pairings += 1
 
-        a = np.empty(len(v), dtype=np.int)
-        for i in range(<int>v.size()):
-            a[v.size() - 1 - i] = <int> segments[v[i], 5]  # reversal of the indexes array
+        size_v = v.size()
+        a = np.empty(size_v, dtype=np.int)
+        for i in range(size_v):
+            a[size_v - 1 - i] = <int> segments[v[i], 5]  # reversal of the indexes array
 
     if secondary < 0:
         secondary = 0
@@ -424,7 +427,7 @@ cpdef void process(Template rt, Params params):
 
     if not paired_end:
         if rt.read1_unmapped:
-            add_scores(rt, np.array([0]).astype(np.float), 0, 0, 125, 0)
+            add_scores(rt, np.array([0]).astype(np.int), 0, 0, 125, 0)
             return
 
         # print(t[:20, :6].astype(int), file=stderr)
@@ -439,7 +442,7 @@ cpdef void process(Template rt, Params params):
 
     else:
         if (r1_len is None and r2_len is None) or (rt.read1_unmapped and rt.read2_unmapped):
-            add_scores(rt, np.array([0, rt.first_read2_index]).astype(np.float), 0, 0, 250, 0)
+            add_scores(rt, np.array([0, rt.first_read2_index]).astype(np.int), 0, 0, 250, 0)
             return
 
         elif rt.read2_unmapped:
