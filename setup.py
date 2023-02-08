@@ -69,7 +69,7 @@ for item in ["io_funcs", "input_stream_alignments", "pairing", "samclips"]:
                                  [f"dodi/{item}.pyx"],
                                  library_dirs=[numpy.get_include()],
                                  extra_compile_args=extras,
-                                 language="c"))
+                                 language="c++"))
 
 
 print("Found packages", find_packages(where="."))
