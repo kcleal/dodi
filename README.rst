@@ -14,7 +14,7 @@ Install using::
 
 To satisfy requirements::
 
-    $ pip install -r requirements.txt; pip install .
+    $ pip install -r requirements.txt; python setup.py install
 
 Run tests::
 
