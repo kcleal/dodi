@@ -15,7 +15,7 @@ from dodi.io_funcs cimport Template, Params
 import time
 from sys import stderr
 
-DTYPE = np.float
+
 ctypedef np.float_t DTYPE_t
 
 
@@ -128,10 +128,15 @@ cdef tuple optimal_path(double[:, :] segments,
     # Choose the best score out of the in edges.
     # Use a special start and end node to score the first and last alignments
 
-    cdef np.ndarray[np.int_t, ndim=1] pred = np.zeros(segments.shape[0], dtype=np.int)
-    cdef np.ndarray[np.float_t, ndim=1] node_scores = np.zeros(segments.shape[0], dtype=np.float)
+    cdef np.ndarray[np.int64_t, ndim=1] pred = np.zeros(segments.shape[0], dtype=np.int64)
+    cdef np.ndarray[np.float64_t, ndim=1] node_scores = np.zeros(segments.shape[0], dtype=np.float64)
     # Next best node score, for finding the secondary path
-    cdef np.ndarray[np.float_t, ndim=1] nb_node_scores = np.zeros(segments.shape[0], dtype=np.float)
+    cdef np.ndarray[np.float64_t, ndim=1] nb_node_scores = np.zeros(segments.shape[0], dtype=np.float64)
+
+    # cdef long[:] pred = np.zeros(segments.shape[0], dtype=int)
+    # cdef double[:] node_scores = np.zeros(segments.shape[0], dtype=float)
+    # Next best node score, for finding the secondary path
+    # cdef double[:] nb_node_scores = np.zeros(segments.shape[0], dtype=float)
 
     normal_jumps = set([])  # Keep track of which alignments form 'normal' pairs between read-pairs
 
@@ -316,7 +321,7 @@ cdef tuple optimal_path(double[:, :] segments,
     cdef int normal_pairings = 0
     cdef int last_i
     cdef int next_i
-    cdef np.ndarray[np.int_t, ndim=1] a
+    cdef np.ndarray[np.int64_t, ndim=1] a
 
     cdef int path_length
     cdef int current_i
@@ -339,7 +344,7 @@ cdef tuple optimal_path(double[:, :] segments,
                 if (last_i, next_i) in normal_jumps:
                     normal_pairings += 1
 
-            a = np.empty(path_length, dtype=np.int)
+            a = np.empty(path_length, dtype=np.int64)
             current_i = 0
             last_i = end_i
             while True:
@@ -363,7 +368,7 @@ cdef tuple optimal_path(double[:, :] segments,
                     normal_pairings += 1
 
         size_v = v.size()
-        a = np.empty(size_v, dtype=np.int)
+        a = np.empty(size_v, dtype=np.int64)
         for i in range(size_v):
             a[size_v - 1 - i] = <int> segments[v[i], 5]  # reversal of the indexes array
 
@@ -427,7 +432,7 @@ cpdef void process(Template rt, Params params):
 
     if not paired_end:
         if rt.read1_unmapped:
-            add_scores(rt, np.array([0]).astype(np.int), 0, 0, 125, 0)
+            add_scores(rt, np.array([0]).astype(np.int64), 0, 0, 125, 0)
             return
 
         # print(t[:20, :6].astype(int), file=stderr)
@@ -442,7 +447,7 @@ cpdef void process(Template rt, Params params):
 
     else:
         if (r1_len is None and r2_len is None) or (rt.read1_unmapped and rt.read2_unmapped):
-            add_scores(rt, np.array([0, rt.first_read2_index]).astype(np.int), 0, 0, 250, 0)
+            add_scores(rt, np.array([0, rt.first_read2_index]).astype(np.int64), 0, 0, 250, 0)
             return
 
         elif rt.read2_unmapped:

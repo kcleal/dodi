@@ -13,7 +13,6 @@ import click
 from sys import stderr, stdin
 import logging
 
-DTYPE = np.float
 ctypedef np.float_t DTYPE_t
 
 from libc.stdlib cimport malloc
@@ -324,7 +323,7 @@ cpdef int get_align_end_offset(cigar):
     return end
 
 
-cdef tuple check_for_good_pairing(template, add_tags):
+cdef tuple check_for_good_pairing(template, add_tags, max_d):
 
     # Check to see if this pair of alignments needs pairing
     r1 = template.inputdata[0]
@@ -348,7 +347,7 @@ cdef tuple check_for_good_pairing(template, add_tags):
 
         if (aflag & 16 and not bflag & 16) or (not aflag & 16 and bflag & 16):  # Not on same strand
 
-            if abs(p1 - p2) < template.max_d:
+            if abs(p1 - p2) < max_d:
                 # Check for FR or RF orientation
                 if (p1 < p2 and (not aflag & 16) and (bflag & 16)) or (p2 <= p1 and (not bflag & 16) and (aflag & 16)):
                     proper_pair = 1
@@ -387,7 +386,7 @@ cpdef int sam_to_array(template, params) except -1:
 
     # If only one alignment for read1 and read2, no need to try pairing, just send sam to output
     if params.paired_end and len(data) == 2:
-        pair_str = check_for_good_pairing(template, params.add_tags)
+        pair_str = check_for_good_pairing(template, params.add_tags, params.default_max_d)
 
         if pair_str:
             template.passed = 1

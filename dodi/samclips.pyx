@@ -580,7 +580,7 @@ cpdef list fixsam(template, params):
             primary2[0] = int(primary2[0])
 
 
-    if paired and template.paired_end:
+    if paired and params.paired_end:
 
         # rev_A/B are set to true/false indicating if the primary aligns should eb reverse complemented
         rev_A, rev_B, primary1, primary2 = set_mate_flag(primary1, primary2, max_d, template.read1_reverse, template.read2_reverse)
