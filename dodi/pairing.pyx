@@ -153,7 +153,7 @@ cdef tuple optimal_path(double[:, :] segments,
     for i in range(segments.shape[0]):
         #node_scores[i] = segments[i, 4] #- (segments[i, 2] * ins_cost)  # segments[i, 4] #
         node_scores[i] = segments[i, 4] - (segments[i, 2] * ins_cost)
-
+    # print(node_scores.astype(int), file=stderr)
     pred.fill(-1)
     nb_node_scores.fill(-1e6)  # Must set to large negative, otherwise a value of zero can imply a path to that node
 
@@ -382,6 +382,8 @@ cdef tuple optimal_path(double[:, :] segments,
     # if True: #debug:
     #     print(pred.astype(int), file=stderr)
     #     print(node_scores.astype(int), file=stderr)
+    # print(pred.astype(int), file=stderr)
+    # print(node_scores.astype(int), file=stderr)
 
     return a, path_score, secondary, best_normal_orientation, normal_pairings
 

@@ -173,13 +173,13 @@ def insert_size(batch):
 
 def process_reads(args):
     t0 = time.time()
-
-    args["insert_median"] = 300.
-    args["insert_stdev"] = 200.
     if args['template_size'] != 'auto':
         insert_std = args["template_size"].split(",")
         args["insert_median"] = float(insert_std[0])
         args["insert_stdev"] = float(insert_std[1])
+    else:
+        args["insert_median"] = 300.
+        args["insert_stdev"] = 200.
 
     if not args["include"]:
         args["bias"] = 1.0

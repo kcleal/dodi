@@ -92,6 +92,7 @@ def show_params():
 Unused if .bed not provided""", default=defaults["bias"], type=float, show_default=True)
 @click.option("--logging", help="Set logging level", default='WARNING',
               type=click.Choice(['INFO', 'WARNING']), show_default=False)
+@click.version_option()
 def dodi_aligner(**kwargs):
     """Choose an optimal set of alignments from a collection of candidates.
     If reads are paired, alignments must be sorted by read-name with the bit flag

@@ -64,7 +64,7 @@ cdef class Params:
 
         self.default_max_d = self.mu + (4 * self.sigma)  # Separation distance threshold to call a pair discordant
 
-        self.find_insert_size = False if not args['paired'] else True
+        self.find_insert_size = False if (not args['paired'] or args['template_size'] == 'auto') else True
         self.modify_mapq = args['modify_mapq']
         self.add_tags = args['tags']
     def __repr__(self):
