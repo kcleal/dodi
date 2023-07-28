@@ -53,17 +53,12 @@ cdef class Params:
         self.max_homology = args["max_overlap"]
         self.inter_cost = args["inter_cost"]
         self.U = args["u"]
-        # cdef float zero_cost_boundary = args["zero_cost_boundary"]
-        # cdef float max_gap_cost = args["max_gap_cost"]
         self.ins_cost = args['ins_cost']
         self.ol_cost = args['ol_cost']
-
         self.paired_end = int(args["paired"])
         self.bias = args["bias"]
         self.secondary = args['secondary']
-
         self.default_max_d = self.mu + (4 * self.sigma)  # Separation distance threshold to call a pair discordant
-
         self.find_insert_size = False if (not args['paired'] or args['template_size'] == 'auto') else True
         self.modify_mapq = args['modify_mapq']
         self.add_tags = args['tags']
@@ -77,24 +72,8 @@ cdef class Params:
 
 
 cdef class Template:
-    def __init__(self, rows, last_seen_chrom): # , paired_end, match_score, bias,
-                         # secondary, min_aln, max_hom, inter_cost, U, zero_cost_boundary, max_gap_cost):
-
-        # self.match_score = match_score
-        #
-        # self.min_aln = min_aln
-        # self.max_homology = max_hom
-        # self.inter_cost = inter_cost
-        # self.U = U
-        # self.zero_cost_bound = zero_cost_boundary
-        # self.max_gap_cost = max_gap_cost
-        #
-        # self.paired_end = paired_end
-        # self.bias = bias
-        # self.secondary = secondary
-
+    def __init__(self, rows, last_seen_chrom):
         self.inputdata = rows
-
         self.read1_length = 0
         self.read2_length = 0
         self.score_mat = {}
@@ -110,7 +89,6 @@ cdef class Template:
         self.read2_reverse = False
         self.read1_unmapped = False
         self.read2_unmapped = False
-
         self.first_read2_index = 0
 
     def __repr__(self):
@@ -118,29 +96,21 @@ cdef class Template:
 
 
 cpdef Template make_template(rows, last_seen_chrom):
-                             # bint paired_end, float match_score, float bias,
-                         # bint secondary, float min_aln, float max_hom, float inter_cost, float U,
-                         #     float zero_cost_boundary, float max_gap_cost):
-
-    return Template(rows, last_seen_chrom)  #, paired_end, match_score, bias,
-                    # secondary, min_aln=min_aln, max_hom=max_hom, inter_cost=inter_cost,
-                    # U=U, zero_cost_boundary=zero_cost_boundary, max_gap_cost=max_gap_cost)
+    return Template(rows, last_seen_chrom)
 
 
 def sam_to_str(template_name, sam):
     for i, item in enumerate(sam):
-        if len(item[8]) != len(item[9]):
+        if len(item[8]) != len(item[9]) and item[8] and item[8] != "*":
             logging.critical(f'SEQ and QUAL not same length, index={i}, qlen={len(item[8])}, quallen={len(item[9])} ' + template_name + " " + str(sam))
             quit()
     return "".join(template_name + "\t" + "\t".join(i) + "\n" for i in sam)
 
 
 def get_include_reads(include_regions, bam):
-
     if not include_regions:
         for r in bam:
             yield r
-
     regions = [i.strip().split("\t")[:3] for i in open(include_regions, "r") if i[0] != "#"]
     for c, s, e in regions:
         logging.info("Reading {}:{}-{}".format(c, s, e))
@@ -382,7 +352,7 @@ cpdef int sam_to_array(template, params) except -1:
     data, overlaps = list(zip(*template.inputdata))
 
     # split the rest of the columns
-    template.inputdata = [i[1:-1] + i[-1].strip().split("\t") for i in data]
+    template.inputdata = [i[1:-1] + i[-1].rstrip().split("\t") for i in data]
 
     # If only one alignment for read1 and read2, no need to try pairing, just send sam to output
     if params.paired_end and len(data) == 2:
