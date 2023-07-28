@@ -128,6 +128,10 @@ cpdef Template make_template(rows, last_seen_chrom):
 
 
 def sam_to_str(template_name, sam):
+    for i, item in enumerate(sam):
+        if len(item[8]) != len(item[9]):
+            logging.critical(f'SEQ and QUAL not same length, index={i}, qlen={len(item[8])}, quallen={len(item[9])} ' + template_name + " " + str(sam))
+            quit()
     return "".join(template_name + "\t" + "\t".join(i) + "\n" for i in sam)
 
 
@@ -247,24 +251,20 @@ def iterate_mappings(args, version):
     yield header_string
 
     last_seen_chrom = ""
-
     for m, last_seen_chrom, ol in inputstream:  # Alignment
         nm = m[0]
         if name != nm:
             if len(rows) > 0:
                 total += 1
-                yield rows, last_seen_chrom #, fq
-
+                yield rows, last_seen_chrom
             rows = []
             name = nm
-
         rows.append((m, ol))  # String, ol states if alignment overlaps ROI
 
     # Deal with last record
     if len(rows) > 0:
         total += 1
-        # fq = fq_getter(fq_iter, name, args, fq_buffer)
-        yield rows, last_seen_chrom #, fq
+        yield rows, last_seen_chrom
 
 
 cdef char *basemap = [ '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',

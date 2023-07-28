@@ -295,8 +295,8 @@ cdef void set_supp_flag_single(sup, pri):
 cdef add_sequence_back(item, reverse_me, template):
     # item is the alignment
     cdef int flag = item[0]
-    c = re.split(r'(\d+)', item[4])[1:]  # Drop leading empty string
-
+    cigar = item[4]
+    c = re.split(r'(\d+)', cigar)[1:]  # Drop leading empty string
     cdef int i, l
     cdef str opp
     cdef int string_length = 0
@@ -310,25 +310,30 @@ cdef add_sequence_back(item, reverse_me, template):
             else:
                 string_length += l
     cdef int cigar_length = string_length + hard_clip_length
-
     if flag & 64:  # Read1
-        seq = template.read1_seq
-        q = template.read1_q
-
+        # sometimes a read seq can be replaced by "*" if the read is a duplicate of its mate, so use mate!
+        if flag & 4 and not template.read1_seq:
+            seq = template.read2_seq
+            q = template.read2_q
+        else:
+            seq = template.read1_seq
+            q = template.read1_q
     elif flag & 128:
-        seq = template.read2_seq
-        q = template.read2_q
-
+        if flag & 4 and not template.read2_seq:
+            seq = template.read1_seq
+            q = template.read1_q
+        else:
+            seq = template.read2_seq
+            q = template.read2_q
     else:
         seq = template.read1_seq  # Unpaired
         q = template.read1_q
 
     cdef int end = len(seq)
-
     if not seq:
         return item, False
 
-    if cigar_length == len(seq):
+    if cigar_length == len(seq) or cigar == "*":
         item[4] = item[4].replace("H", "S")
         item[8] = seq
         if q:
@@ -617,12 +622,9 @@ cpdef list fixsam(template, params):
 
     for a_type, aln, reverse_me in out:
         if aln:  # None here means no alignment for primary2
-
             # Do for all supplementary
-            if aln[8] == "*" or "H" in aln[4]:  # or aln[0] & 2048:  # Sequence might be "*", needs adding back in
-
+            if aln[8] == "*" or "H" in aln[4]:  # Sequence might be "*", needs adding back in
                 aln, success = add_sequence_back(aln, reverse_me, template)
-
                 if reverse_me and success:
                     aln[8] = io_funcs.reverse_complement(str(aln[8]), len(aln[8]))
                     aln[9] = aln[9][::-1]
