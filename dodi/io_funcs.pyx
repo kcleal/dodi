@@ -101,7 +101,7 @@ cpdef Template make_template(rows, last_seen_chrom):
 
 def sam_to_str(template_name, sam):
     for i, item in enumerate(sam):
-        if len(item[8]) != len(item[9]) and item[8] and item[8] != "*":
+        if len(item[8]) != len(item[9]) and item[8] and item[9] != "*":
             logging.critical(f'SEQ and QUAL not same length, index={i}, qlen={len(item[8])}, quallen={len(item[9])} ' + template_name + " " + str(sam))
             quit()
     return "".join(template_name + "\t" + "\t".join(i) + "\n" for i in sam)
