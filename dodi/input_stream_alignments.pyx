@@ -162,7 +162,7 @@ def process_reads(args):
     if params.paired_end:
         batch_size = 10_000
     else:
-        batch_size = 10
+        batch_size = 100
 
     if n_jobs == 1:
 
@@ -177,8 +177,9 @@ def process_reads(args):
         for rows, last_seen_chrom in itr:
             count += 1
             temp = make_template(rows, last_seen_chrom)
+            batch.append(temp)
             if len(batch) < batch_size:
-                batch.append(temp)
+                continue
             else:
                 # process one batch
                 max_d = params.default_max_d
