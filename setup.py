@@ -6,12 +6,6 @@ import numpy
 from distutils import ccompiler
 
 
-# This was stolen from pybind11
-# https://github.com/pybind/python_example/blob/master/setup.py
-# As of Python 3.6, CCompiler has a `has_flag` method.
-# cf http://bugs.python.org/issue26689
-
-
 def has_flag(compiler, flagname):
     """Return a boolean indicating whether a flag name is supported on
     the specified compiler.
@@ -39,9 +33,7 @@ def cpp_flag(compiler, flags):
 def get_extra_args():
     compiler = ccompiler.new_compiler()
     extra_compile_args = []
-
     flags = ['-std=c++20', '-std=c++17', '-std=c++14', '-std=c++11']
-
     f = cpp_flag(compiler, flags)
     if not f:
         raise RuntimeError("Invalid compiler")
@@ -51,10 +43,6 @@ def get_extra_args():
     f = cpp_flag(compiler, flags)
     if f:
         extra_compile_args.append(f)
-    # flags = ['-W#warnings']
-    # f = cpp_flag(compiler, flags)
-    # if f:
-    #     extra_compile_args.append(f)
     return extra_compile_args
 
 
@@ -75,20 +63,9 @@ for item in ["io_funcs", "input_stream_alignments", "pairing", "samclips"]:
 print("Found packages", find_packages(where="."))
 setup(
     name="dodi",
-    version='0.4.7',
-    python_requires='>=3.7',
-    install_requires=[
-            'cython',
-            'click',
-            'numpy',
-            'ncls'
-        ],
+    install_requires=['Cython', 'numpy'],
     packages=find_packages(where="."),
     ext_modules=cythonize(ext_modules),
     include_dirs=[numpy.get_include()],
     include_package_data=True,
-    entry_points='''
-        [console_scripts]
-        dodi=dodi.main:dodi_aligner
-    ''',
 )

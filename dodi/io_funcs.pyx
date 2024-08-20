@@ -1,23 +1,23 @@
 #!python
-#cython: language_level=2, boundscheck=False
-#cython: profile=False
-#distutils: language=c++
+# cython: language_level=3, boundscheck=False
+# cython: profile=False
+# distutils: language=c++
 
-# Language level 2 is needed for char map
 
 import numpy as np
 cimport numpy as np
 from collections import defaultdict
 import os
 import click
-from sys import stderr, stdin
+from sys import stderr
 import logging
 
 ctypedef np.float_t DTYPE_t
 
 from libc.stdlib cimport malloc
 from libcpp.vector cimport vector as cpp_vector
-import re
+
+from cython.operator import dereference
 
 
 def echo(*arg):
@@ -59,27 +59,28 @@ cdef class Params:
         self.bias = args["bias"]
         self.secondary = args['secondary']
         self.default_max_d = self.mu + (4 * self.sigma)  # Separation distance threshold to call a pair discordant
-        self.find_insert_size = False if (not args['paired'] or args['template_size'] == 'auto') else True
+        self.find_insert_size = False if (not args['paired'] or args['template_size'] != 'auto') else True
         self.modify_mapq = args['modify_mapq']
-        self.add_tags = args['tags']
+
     def __repr__(self):
         return ', '.join([f'{k}={v}' for k, v in {'match_score': self.match_score, 'mu': self.mu, 'sigma': self.sigma, 'min_aln': self.min_aln,
                 'max_homology': self.max_homology, 'inter_cost': self.inter_cost, 'u': self.U, 'ins_cost': self.ins_cost,
                 'ol_cost': self.ol_cost, 'paired_end': self.paired_end, 'bias': self.bias, 'secondary': self.secondary,
                 'default_max_d': self.default_max_d, 'find_insert_size': self.find_insert_size, 'modify_mapq': self.modify_mapq,
-                'add_tags': self.add_tags
         }.items()])
 
 
 cdef class Template:
-    def __init__(self, rows, last_seen_chrom):
+    # def __init__(self, rows, last_seen_chrom):
+    def __cinit__(self, rows):
         self.inputdata = rows
         self.read1_length = 0
         self.read2_length = 0
-        self.score_mat = {}
+        # self.score_mat = {}
         self.passed = 0
-        self.name = rows[0][0][0]
-        self.last_seen_chrom = last_seen_chrom
+        # self.name = rows[0][0][0]
+        self.name = rows[0][0]
+        # self.last_seen_chrom = last_seen_chrom
         self.read1_seq = ""  # Some sam records may have seq == '*' , need a record of full seq for adding back in
         self.read2_seq = ""
         self.read1_q = ""
@@ -90,21 +91,17 @@ cdef class Template:
         self.read1_unmapped = False
         self.read2_unmapped = False
         self.first_read2_index = 0
+        self.primary1 = -1
+        self.primary2 = -1
+    def __init__(self, rows):
+        pass
 
     def __repr__(self):
         return str(to_dict(self))
 
 
-cpdef Template make_template(rows, last_seen_chrom):
-    return Template(rows, last_seen_chrom)
-
-
-def sam_to_str(template_name, sam):
-    for i, item in enumerate(sam):
-        if len(item[8]) != len(item[9]) and item[8] and item[9] != "*":
-            logging.critical(f'SEQ and QUAL not same length, index={i}, qlen={len(item[8])}, quallen={len(item[9])} ' + template_name + " " + str(sam))
-            quit()
-    return "".join(template_name + "\t" + "\t".join(i) + "\n" for i in sam)
+cdef Template make_template(rows):
+    return Template(rows)
 
 
 def get_include_reads(include_regions, bam):
@@ -118,81 +115,57 @@ def get_include_reads(include_regions, bam):
             yield r
 
 
-from libc.stdio cimport FILE, stdin
+cdef class Writer:
+    def __init__(self):
+        pass
+    cdef void set_ptr(self, FILE *out):
+        self.outsam = out
+    cdef void write(self, bytes byte_string):
+        cdef char * to_write = byte_string
+        fputs(to_write, self.outsam)
+    def __dealloc__(self):
+        if self.outsam:
+            fclose(self.outsam)
 
-cdef extern from "stdio.h":
-    FILE *fopen(const char *, const char *)
-    int fclose(FILE *)
-    ssize_t getline(char **, size_t *, FILE *)
 
+cdef class Reader:
+    def __cinit__(self):
+        self.bufsize = 0
+    def __init__(self):
+        pass
+    cdef void set_ptr(self, FILE *in_sam):
+        self.insam = in_sam
 
-def file_iter(sam):
-
-    filename_byte_string = sam.encode("ascii")
-    cdef char * fname = filename_byte_string
-
-    cdef FILE * cfile
-    if sam in '-stdin':
-        cfile = stdin
-    else:
-        cfile = fopen(fname, "rb")
-    if cfile == NULL:
-        raise FileNotFoundError(f"No such file or directory: {sam}")
-
-    cdef char * buffer = NULL
-    cdef size_t bufsize = 0
-    cdef ssize_t read
-
-    while True:
-        read = getline(&buffer, &bufsize, cfile)
+    cdef header_to_file(self, Writer writer, extra_header_line):
+        cdef int hl = 0
+        cdef bytes byte_string
+        cdef char * to_write
+        while True:
+            read = getline(&self.buffer, &self.bufsize, self.insam)
+            if read == -1:
+                return
+            if self.buffer[0] == b'@':
+                fputs(self.buffer, writer.outsam)
+                hl += 1
+            else:
+                if hl > 0:
+                    byte_string = extra_header_line.encode('ascii')
+                    to_write = byte_string
+                    fputs(to_write, writer.outsam)
+                return self.buffer.decode("ascii")
+    cdef read_line(self):
+        read = getline(&self.buffer, &self.bufsize, self.insam)
         if read == -1:
-            break
-        yield str(buffer.decode("ascii"))
-    fclose(cfile);
+            return
+        return self.buffer.decode("ascii")
+
+    def __dealloc__(self):
+        if self.insam:
+            fclose(self.insam)
 
 
-def sam_itr(args):
-
-    # itr = args["sam"]
-    itr = file_iter(args['sam'])
-    tree = overlap_regions(args["include"])
-
-    # First get header
-    header_string = ""
-    last_seen_chrom = ""
-    first_line = ""
-    for t in itr:
-        if t[0] == "@":
-            header_string += t
-            continue
-        first_line = t.split("\t", 9)
-        last_seen_chrom = first_line[2]
-        yield header_string
-        break
-
-    try:
-        pos = int(first_line[3])
-    except IndexError:
-        raise IOError("No sam lines detected")
-
-    ol = intersecter(tree, first_line[2], pos, pos + 250)
-
-    yield first_line, last_seen_chrom, ol
-
-    for t in itr:
-        line = t.split("\t", 9)
-        if line[3] != last_seen_chrom:
-            last_seen_chrom = line[2]
-
-        pos = int(line[3])
-        ol = intersecter(tree, line[2], pos, pos + 250)
-
-        yield line, last_seen_chrom, ol
-
-
-def iterate_mappings(args, version):
-
-    params = {'paired',
+def header_info_line(args):
+    params = ['paired',
               'template_size',
               'keep_mapq',
               'secondary',
@@ -206,55 +179,24 @@ def iterate_mappings(args, version):
               'match_score',
               'include',
               'bias',
-              'u'}
-    cp_args = {k: v for k, v in args.items() if k in params}
-
+              'u']
     arg_str = ", ".join(["{}={}".format(i, j) for i, j in args.items() if i in params])
-    inputstream = sam_itr(args)
-
-    total = 0
-    name = ""
-    rows = []
-    header_string = next(inputstream)
-    header_string += "@PG\tID:DODI\tPN:dodi\tVN:{}\tCL:{}\n".format(version, arg_str)
-
-    yield header_string
-
-    last_seen_chrom = ""
-    for m, last_seen_chrom, ol in inputstream:  # Alignment
-        nm = m[0]
-        if name != nm:
-            if len(rows) > 0:
-                total += 1
-                yield rows, last_seen_chrom
-            rows = []
-            name = nm
-        rows.append((m, ol))  # String, ol states if alignment overlaps ROI
-
-    # Deal with last record
-    if len(rows) > 0:
-        total += 1
-        yield rows, last_seen_chrom
+    return "@PG\tID:DODI\tPN:dodi\tVN:{}\tCL:{}\n".format(args['version'], arg_str)
 
 
-cdef char *basemap = [ '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-                       '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-                       '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-                       '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-                       '\0',  'T', '\0',  'G', '\0', '\0', '\0',  'C', '\0', '\0', '\0', '\0', '\0', '\0',  'N', '\0',
-                       '\0', '\0', '\0', '\0',  'A',  'A', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-                       '\0',  't', '\0',  'g', '\0', '\0', '\0',  'c', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-                       '\0', '\0', '\0', '\0',  'a',  'a' ]
-
-np.random.seed(0)
+cdef char *basemap = [ b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0',
+                       b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0',
+                       b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0',
+                       b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0',
+                       b'\0', b'T', b'\0',  b'G', b'\0', b'\0', b'\0',  b'C', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0',  b'N', b'\0',
+                       b'\0', b'\0', b'\0', b'\0',  b'A',  b'A', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0',
+                       b'\0', b't', b'\0',  b'g', b'\0', b'\0', b'\0',  b'c', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0', b'\0',
+                       b'\0', b'\0', b'\0', b'\0',  b'a',  b'a' ]
 
 
 cpdef str reverse_complement(str seq, int seq_len):
-    """https://bioinformatics.stackexchange.com/questions/3583/\
-    what-is-the-fastest-way-to-get-the-reverse-complement-of-a-dna-sequence-in-pytho/3595#3595"""
-
     cdef char *seq_dest = <char *>malloc(seq_len + 1)
-    seq_dest[seq_len] = '\0'
+    seq_dest[seq_len] = b'\0'
 
     cdef bytes py_bytes = seq.encode('ascii')
     cdef char *seq_src = py_bytes
@@ -264,122 +206,83 @@ cpdef str reverse_complement(str seq, int seq_len):
     return seq_dest[:seq_len].decode('ascii')
 
 
-cpdef get_start_end(cigar):
-    c = re.split(r'(\d+)', cigar)
-    cdef int end = 0
+cdef tuple get_start_end(cigar):
     cdef int start = 0
+    cdef int end = 0
     cdef int template_length = 0
-    cdef int i
-
-    for i in range(1, len(c), 2):
-        ci = int(c[i])
-        if i == 1 and (c[i+1] == "S" or c[i+1] == "H"):
-            start += ci
-            end += ci
-        elif c[i+1] not in "DHS":  # Don't count deletions, or soft/hard clips at right-hand side
-            end += ci
-        if c[i+1] != "D":
-            template_length += ci
+    cdef int num = 0  # To accumulate the number as we parse through the string
+    cdef char op
+    cdef bytes t = cigar.encode('utf8')
+    cdef char *c_cigar = t
+    cdef bint first_op = True
+    while dereference(c_cigar):
+        if b'0' <= dereference(c_cigar) <= b'9':
+            # Convert digit char to int and accumulate
+            num = num * 10 + (dereference(c_cigar) - 48)  # ord(b'0') = 48
+        else:
+            op = dereference(c_cigar)
+            if first_op and (op == b'S' or op == b'H'):
+                start += num
+                end += num
+            elif op != b'D' and op != b'S' and op != b'H':
+                end += num
+            if op != b'D':
+                template_length += num
+            num = 0
+            first_op = False
+        c_cigar += 1
     return start, end, template_length
 
 
-cpdef int get_align_end_offset(cigar):
-    c = re.split(r'(\d+)', cigar)
+cdef int get_align_end_offset(cigar):
     cdef int end = 0
-    cdef int i
-    for i in range(1, len(c), 2):
-        if c[i+1] not in "DHS":  # Don't count deletions, or soft/hard clips at right-hand side
-            end += int(c[i])
+    cdef int num = 0
+    cdef char op
+    cdef bytes t = cigar.encode('utf8')
+    cdef char *c_cigar = t
+    while dereference(c_cigar):
+        if b'0' <= dereference(c_cigar) <= b'9':
+            # Convert digit char to int and accumulate
+            num = num * 10 + (dereference(c_cigar) - 48)  # ord(b'0') = 48
+        else:
+            op = dereference(c_cigar)
+            if op not in b'DSH':  # Don't count deletions, or soft/hard clips at right-hand side
+                end += num
+            num = 0
+        c_cigar += 1
     return end
 
 
-cdef tuple check_for_good_pairing(template, add_tags, max_d):
+DEF AS_FOUND = 1
+DEF NM_FOUND = 2
 
-    # Check to see if this pair of alignments needs pairing
-    r1 = template.inputdata[0]
-    r2 = template.inputdata[1]
-
-    cdef int aflag = int(r1[0])
-    cdef int bflag = int(r2[0])
-
-    if aflag & 4:
-        template.read1_unmapped = 1
-    if bflag & 4:
-        template.read2_unmapped = 1
-
-    # Check if rnext and pnext set properly
-    cdef int p1, p2
-    cdef int proper_pair = 1 if aflag & 2 else 0
-
-    if not proper_pair and not aflag & 12:  # Read unmapped/mate unmapped. Double check in case flag not set properly
-        p1 = int(r1[2])  # Position
-        p2 = int(r2[2])
-
-        if (aflag & 16 and not bflag & 16) or (not aflag & 16 and bflag & 16):  # Not on same strand
-
-            if abs(p1 - p2) < max_d:
-                # Check for FR or RF orientation
-                if (p1 < p2 and (not aflag & 16) and (bflag & 16)) or (p2 <= p1 and (not bflag & 16) and (aflag & 16)):
-                    proper_pair = 1
-
-    if add_tags:
-        if proper_pair == 1:
-            dn = '0.0'
-        else:
-            dn = '250.0'
-
-        if aflag & 4 and bflag & 4:  # Read unmapped, mate unmapped
-            r1 += f"ZM:f:0\tZA:i:0\tZP:f:0\tZN:f:{dn}\tZS:f:0\tZO:i:0"
-            r2 += f"ZM:f:0\tZA:i:0\tZP:f:0\tZN:f:{dn}\tZS:f:0\tZO:i:0"
-
-        elif aflag & 4:
-            r1 += f"ZM:f:0\tZA:i:0\tZP:f:0\tZN:f:{dn}\tZS:f:0\tZO:i:0"
-            r2 += f"ZM:f:0\tZA:i:100\tZP:f:125\tZN:f:{dn}\tZS:f:125\tZO:i:0"
-
-        elif bflag & 4:
-            r1 += f"ZM:f:0\tZA:i:100\tZP:f:125\tZN:f:{dn}\tZS:f:125\tZO:i:0"
-            r2 += f"ZM:f:0\tZA:i:0\tZP:f:0\tZN:f:{dn}\tZS:f:0\tZO:i:0"
-
-        else:
-            r1 += f"ZM:f:1\tZA:i:100\tZP:f:250\tZN:f:{dn}\tZS:f:250\tZO:i:0"
-            r1 += f"ZM:f:1\tZA:i:100\tZP:f:250\tZN:f:{dn}\tZS:f:250\tZO:i:0"
-
-    return r1, r2
-
-
-cpdef int sam_to_array(template, params) except -1:
+cdef int sam_to_array(Template template, Params params, tree):
     # Expect read1 and read2 alignments to be concatenated, not mixed together
-    data, overlaps = list(zip(*template.inputdata))
+    data = template.inputdata
 
     # split the rest of the columns
-    template.inputdata = [i[1:-1] + i[-1].rstrip().split("\t") for i in data]
+    template.inputdata = [i[1:-1] + i[-1].split("\t") for i in data]
 
     # If only one alignment for read1 and read2, no need to try pairing, just send sam to output
     if params.paired_end and len(data) == 2:
-        pair_str = check_for_good_pairing(template, params.add_tags, params.default_max_d)
+        template.passed = 1
+        template.outstr = (template.inputdata[0], template.inputdata[1])
+        return 1
 
-        if pair_str:
-            template.passed = 1
-            template.outstr = pair_str
-            return 1
-
-    # [chrom, pos, query_start, query_end, aln_score, row_index, strand, read, num_mis-matches, original_aln_score]
+    # [chrom, pos, query_start, query_end, aln_score, row_index, strand, read, mq, original_aln_score]
     cdef np.ndarray[np.float_t, ndim=2] arr = np.zeros((len(data), 10))
 
     chrom_ids = {}
 
-    if template.inputdata[0][1] == "*":
-        template.inputdata[0][1] = template.last_seen_chrom
-
     cdef int cc = 0
-    cdef int idx, pos, flag, seq_len, query_start, query_end, start_temp
+    cdef int idx, pos, flag, seq_len, query_start, query_end, start_temp, tc, j
     cdef str chromname, cigar, k, t, v
     cdef float bias = params.bias
 
     cdef int read1_strand_set, read2_strand_set, current_l
     cdef int first_read2_index = len(template.inputdata) + 1
-    read1_set = 0  # Occasionally multiple primaries, take the longest
-    read2_set = 0
+    cdef int read1_set = 0  # Occasionally multiple primaries, take the longest
+    cdef int read2_set = 0
 
     for idx in range(len(template.inputdata)):
 
@@ -387,12 +290,7 @@ cpdef int sam_to_array(template, params) except -1:
 
         flag = int(l[0])
         pos = int(l[2])
-        if l[1] != "*":
-            chromname = l[1]
-            template.last_seen_chrom = chromname
-        else:
-            l[1] = template.last_seen_chrom
-            chromname = l[1]
+        chromname = l[1]
         if chromname not in chrom_ids:
             chrom_ids[chromname] = cc
             cc += 1
@@ -401,6 +299,25 @@ cpdef int sam_to_array(template, params) except -1:
         arr[idx, 1] = pos
         arr[idx, 5] = idx
         arr[idx, 6] = -1 if flag & 16 else 1
+
+        arr[idx, 8] = int(l[3])  # mapq
+
+        seq_len = len(l[8])
+        tc = 0
+        for j in range(11, len(l)):
+            tag = l[j]
+            if not tc & AS_FOUND and tag.startswith("AS"):
+                arr[idx, 9] = float(tag[5:])  # Keep copy of original alignment score
+                if tree and intersecter(tree, chromname, pos, pos + 1):
+                    arr[idx, 4] = arr[idx, 9] * bias
+                else:
+                    arr[idx, 4] = arr[idx, 9]
+                tc &= AS_FOUND
+            elif not tc & NM_FOUND and tag.startswith("NM"):
+                arr[idx, 8] = float(tag[5:])
+                tc &= NM_FOUND
+            if tc == 3:
+                break
 
         if idx == 0 and flag & 4:
             template.read1_unmapped = 1
@@ -417,18 +334,6 @@ cpdef int sam_to_array(template, params) except -1:
                     first_read2_index = idx
                     if flag & 4:
                         template.read2_unmapped = 1
-
-        tags = [i.split(":") for i in l[11:]]
-        seq_len = len(l[8])
-        for k, t, v in tags:
-            if k == "NM":
-                arr[idx, 8] = float(v)
-            elif k == "AS":
-                arr[idx, 9] = float(v)  # Keep copy of original alignment score
-                if overlaps[idx]:
-                    arr[idx, 4] = float(v) * bias
-                else:
-                    arr[idx, 4] = float(v)
 
         current_l = len(l[8])
 
@@ -482,7 +387,7 @@ cpdef int sam_to_array(template, params) except -1:
                 if template_length == 0:
                     template_length = len(l[8])  # if length from cigar failed, use seq length
                     if template_length <= 1:
-                        echo('Could not infer template length')
+                        logging.error('Could not infer template length')
                         return -1
                         # raise ValueError('Could not infer template length')
                 template.read1_length = template_length
@@ -495,23 +400,14 @@ cpdef int sam_to_array(template, params) except -1:
         arr[idx, 2] = query_start
         arr[idx, 3] = query_end
 
-    # if template.name == '01726306-45be-4337-bf31-c1b71083d2e9.21q1F_False':
-    #     echo('Hiiii')
-    #     echo(len(template.read1_seq))
-    # todo is this needed?
-    # if first_read2_index == len(arr) + 1:
-    #     template.paired_end = 0
-
-    cdef int j
     if params.paired_end:  # Increment the contig position of read 2
-        for j in range(first_read2_index, len(arr)):
-            if arr[j, 7] == 2:  # Second in pair
-                arr[j, 2] += template.read1_length
-                arr[j, 3] += template.read1_length
-            if arr[j, 3] > template.read1_length + template.read2_length:
-                echo('Infered template length greather than found read1 + read2 length. Is the file name sorted?', arr[j, 3], template.read1_length, template.read2_length)
-                # raise ValueError
-                return -1
+        for idx in range(first_read2_index, len(arr)):
+            if arr[idx, 7] == 2:  # Second in pair
+                arr[idx, 2] += template.read1_length
+                arr[idx, 3] += template.read1_length
+            if arr[idx, 3] > template.read1_length + template.read2_length:
+                logging.error('Inferred template length greater than found read1 + read2 length. Is the file name sorted?', arr[idx, 3], template.read1_length, template.read2_length)
+
     template.first_read2_index = first_read2_index
     template.data_ori = arr
     template.chrom_ids = chrom_ids
@@ -519,31 +415,21 @@ cpdef int sam_to_array(template, params) except -1:
     return 0
 
 
-cpdef void choose_supplementary(template):
+cdef void choose_supplementary(Template template):
     # Final alignments have been chosen, but need to decide which is supplementary
     cdef int j = 0
-
     cdef double read1_max = -1
     cdef double read2_max = -1
     cdef int i = 0
-    cdef int row_idx
-
-    primary_1 = -1
-    primary_2 = -1
-
+    cdef size_t row_idx
     cdef double[:, :] data_table = template.data_ori
-    cdef long[:] rows = template.rows
-    for row_idx in rows:
-        if data_table[row_idx, 7] == 1 and data_table[row_idx, 9] > read1_max:  # Use original alignment score, not biased (idx==4)
+    for row_idx in template.path_result.path:
+        if data_table[row_idx, 7] == 1 and data_table[row_idx, 9] > read1_max:  # Use original alignment score
             read1_max = data_table[row_idx, 9]
-            primary_1 = row_idx
-
+            template.primary1 = row_idx
         elif data_table[row_idx, 7] == 2 and data_table[row_idx, 9] > read2_max:
             read2_max = data_table[row_idx, 9]
-            primary_2 = row_idx
-
-    template.primary1 = primary_1
-    template.primary2 = primary_2
+            template.primary2 = row_idx
 
 
 cpdef void score_alignments(template):
@@ -659,9 +545,6 @@ def merge_intervals(intervals, srt=True, pad=0, add_indexes=False):
                 else:
                     merged.append(list(higher)[:3] + [[higher[3]]])
     return merged
-
-
-
 
 
 cdef class Py_BasicIntervalTree:

@@ -5,9 +5,11 @@
 Utils to generate proper sam output and flag information
 """
 from __future__ import absolute_import
+import math
 import re
 import click
-from . import io_funcs
+from dodi import io_funcs
+from dodi.io_funcs cimport get_align_end_offset, Template, Params
 from sys import stderr
 
 
@@ -46,13 +48,13 @@ cdef list set_tlen(out):
 
         # Use the end position of the alignment if read is on the reverse strand, or start pos if on the forward
         if flg1 & 16:  # Read rev strand
-            aln_end1 = io_funcs.get_align_end_offset(pri_1[4])
+            aln_end1 = get_align_end_offset(pri_1[4])
             t1 = p1_pos + aln_end1
         else:
             t1 = p1_pos
 
         if flg2 & 16:
-            aln_end2 = io_funcs.get_align_end_offset(pri_2[4])
+            aln_end2 = get_align_end_offset(pri_2[4])
             t2 = p2_pos + aln_end2
         else:
             t2 = p2_pos
@@ -77,7 +79,7 @@ cdef list set_tlen(out):
         sup_chrom = sup_tuple[1][1]
         sup_pos = int(sup_tuple[1][2])
 
-        sup_end = io_funcs.get_align_end_offset(sup_tuple[1][4])
+        sup_end = get_align_end_offset(sup_tuple[1][4])
         if sup_flg & 16:  # If reverse strand, count to end
             sup_pos += sup_end
 
@@ -342,87 +344,24 @@ cdef add_sequence_back(item, reverse_me, template):
 
     return item, False
 
-    # Occasionally the H is missing, means its impossible to add sequence back in
-# back
-#     if (flag & 64 and len(template.read1_seq) > cigar_length) or \
-#             (flag & 128 and len(template.read2_seq) > cigar_length):
-#
-#         return item, False
-#
-#     cdef int start = 0
-#
-#
-#     # Try and replace H with S
-#
-#     new_cigar = ''
-#     if c[1] == "H" or c[-1] == "H":
-#         # Replace hard with soft-clips
-#         if cigar_length == end: # and template.replace_hard:
-#             new_cigar = item[4].replace("H", "S")
-#
-#         else:
-#             # Remove seq
-#             if c[1] == "H":
-#                 start += int(c[0])
-#             if c[-1] == "H":
-#                 end -= int(c[-2])
-#
-#     # Might need to collect from the reverse direction; swap end and start
-#     if flag & 256 or flag & 2048:
-#         if flag & 64 and template.read1_reverse != bool(flag & 16):
-#             # Different strand to primary, count from end
-#             new_end = template.read1_length - start
-#             new_start = template.read1_length - end
-#             start = new_start
-#             end = new_end
-#
-#         elif flag & 128 and (template.read2_reverse != bool(flag & 16)):
-#             new_end = template.read2_length - start
-#             new_start = template.read2_length - end
-#             start = new_start
-#             end = new_end
-#
-#     # Try and use the primary sequence to replace hard-clips
-#     if item[9] == "*" or len(item[9]) < abs(end - start) or len(item[9]) == 0:
-#         if flag & 64:  # Read1
-#             s = template.read1_seq[start:end]
-#             q = template.read1_q[start:end]
-#         else:
-#             s = template.read2_seq[start:end]
-#             q = template.read2_q[start:end]
-#         if len(s) == cigar_length:
-#             item[8] = s
-#             item[9] = q
-#
-#     if len(item[8]) != cigar_length:
-#         echo(item)
-#         echo(len(template.read1_seq), len(template.read2_seq))
-#         echo(len(item[8]), cigar_length, len(item[9]), start, end)
-#         #raise ValueError
-#         quit()
-#         return item, False
-#
-#     assert len(item[8]) == cigar_length
-#     item[4] = new_cigar
-#     return item, True
-
 
 cdef list replace_sa_tags(alns):
     if len(alns) == 0:
         return alns
+
     if any([i[0] == "sup" for i in alns]):
         sa_tags = {}  # Read1: tag, might be multiple split alignments
         alns2 = []
         for i, j, k in alns:
             # Remove any SA tags in alignment, might be wrong
-            j = [item for idx, item in enumerate(j) if idx <= 9 or (idx > 9 and item[:2] != "SA")]
+            j = [item for idx, item in enumerate(j) if idx <= 9 or (idx > 9 and not item.startswith("SA"))]
             flag = j[0]
             mapq = j[3]
             nm = 0
             chrom = j[1]
             pos = j[2]
             for tg in j[10:]:
-                if tg[:2] == "NM":
+                if tg.startswith("NM"):
                     nm = tg[5:]
                     break
 
@@ -443,13 +382,13 @@ cdef list replace_sa_tags(alns):
             flag = j[0]
             key = (flag & 64, 0 if flag & 2048 else 1)
             if key in sa_tags:
-                j.insert(14, "SA:Z:" + sa_tags[key])
+                if j[-1][-1] == "\n":
+                    j[-1] = j[-1].rstrip('\n')
+                j.append(f"SA:Z:{sa_tags[key]}\n")
             out.append((i, j, k))
         return out
     else:
-        # Might need to remove SA tags
-
-        return [(i, [item for idx, item in enumerate(j) if idx <= 9 or (idx > 9 and item[:2] != "SA")], ii) for i, j, ii in alns]
+        return [(i, [item for idx, item in enumerate(j) if idx <= 9 or (idx > 9 and not item.startswith("SA"))], ii) for i, j, ii in alns]
 
 
 cdef list replace_mc_tags(alns):
@@ -458,7 +397,7 @@ cdef list replace_mc_tags(alns):
     if len(alns) <= 1:
         return alns
 
-    cdef int i
+    cdef int i, last
 
     a = alns[0][1]
 
@@ -471,19 +410,44 @@ cdef list replace_mc_tags(alns):
     read2_cigar = b[4] if b[0] & 128 else a[4]
 
     for count, (ps, a, _) in enumerate(alns):
+
+        last = len(a) - 1
         for i in range(10, len(a)):
-            if a[i][0:2] == "MC":
-                if a[0] & 64:
-                    a[i] = f"MC:Z:{read2_cigar}"
+            if a[i].startswith("MC"):
+                if i == last:
+                    if a[0] & 64:
+                        a[i] = f"MC:Z:{read2_cigar}\n"
+                    else:
+                        a[i] = f"MC:Z:{read1_cigar}\n"
                 else:
-                    a[i] = f"MC:Z:{read1_cigar}"
+                    if a[0] & 64:
+                        a[i] = f"MC:Z:{read2_cigar}"
+                    else:
+                        a[i] = f"MC:Z:{read1_cigar}"
                 break
     return alns
+
+
+# cdef joint_mapq(float mapQ1, float mapQ2):
+#     # Convert individual mapQs to probabilities
+#     cdef double p_incorrect1 = 10 ** (-mapQ1 / 10)
+#     cdef double p_incorrect2 = 10 ** (-mapQ2 / 10)
+#
+#     # Joint probability of both reads being correct
+#     cdef double p_joint_correct = 1 - (p_incorrect1 * p_incorrect2)
+#
+#     # Convert back to PHRED scale
+#     if p_joint_correct >= 0.999999:
+#         return 60
+#     return int(-10 * math.log10(1 - p_joint_correct))
 
 
 cdef modify_split_read_mapq(template, primary1, primary2, out, max_d):
     if len(out) == 0:
         return
+
+    # pq1 = float(primary1[3])
+    # pq2 = float(primary2[3])
 
     for _, sup, _ in out:
         flag_sup = sup[0]
@@ -503,28 +467,46 @@ cdef modify_split_read_mapq(template, primary1, primary2, out, max_d):
                 #         # proper pair
                 #         pp = True
                 # if pp:
+
+                # prob that both a wrong
+
+                # q2 = int(sup[3])
+                # joint = str(joint_mapq(pq1, q2))
+                # primary2[3] = joint
+                # sup[3] = joint
+
+                # Set minimum to avg method
+                # avg_mapq = int((int(primary2[3]) + int(sup[3])) / 2)
+                # primary2[3] = str(max(int(primary2[3]), avg_mapq))
+                # sup[3] = str(max(int(sup[3]), avg_mapq))
+
+                # Take the max method
                 max_mapq = str(max(int(primary2[3]), int(sup[3])))
                 primary2[3] = max_mapq
                 sup[3] = max_mapq
 
         else:
             if abs(int(primary1[2]) - int(sup[2])) < max_d:
+                # q2 = int(sup[3])
+                # joint = str(joint_mapq(pq1, q2))
+                # primary1[3] = joint
+                # sup[3] = joint
+
+                # avg_mapq = int((int(primary1[3]) + int(sup[3])) / 2)
+                # primary1[3] = str(max(int(primary1[3]), avg_mapq))
+                # sup[3] = str(max(int(sup[3]), avg_mapq))
+
                 max_mapq = str(max(int(primary1[3]), int(sup[3])))
                 primary1[3] = max_mapq
                 sup[3] = max_mapq
 
 
-cpdef list fixsam(template, params):
+cdef list fixsam(Template template, Params params):
 
     cdef int j, row_idx
 
-    # sam = [template.inputdata[j] for j in template.rows]
-
     max_d = params.default_max_d
-
     paired = False if template.read2_length is 0 else True
-    score_mat = template.score_mat
-
     out = []
     primary1 = None
     primary2 = None
@@ -537,9 +519,8 @@ cpdef list fixsam(template, params):
     primary1_idx = template.primary1
     primary2_idx = template.primary2
 
-    # strip_tags = {'ZA', 'ZP', 'ZN', 'ZS', 'ZM', 'ZO'}
-
-    for row_idx in template.rows:
+    # for row_idx in template.rows:
+    for row_idx in template.path_result.path:
 
         l = inputdata[row_idx]
 
@@ -548,20 +529,6 @@ cpdef list fixsam(template, params):
         strand = "-1" if l[0] & 16 else "1"
         rid = str(2 if l[0] & 128 else 1)
         xs = int(tabledata[row_idx, 4])  # the biased alignment score
-
-        if params.add_tags:
-            if l[0] & 2048:
-                os = "ZO:i:1"  # refers to "originally supplementary"
-            else:
-                os = "ZO:i:0"
-            l += [
-                  "ZA:i:" + str(xs),
-                  "ZP:f:" + str(round(score_mat["dis_to_next_path"], 0)),
-                  "ZN:f:" + str(round(score_mat["dis_to_normal"], 2)),
-                  "ZS:f:" + str(round(score_mat["path_score"], 2)),
-                  "ZM:f:" + str(round(score_mat["normal_pairings"], 1)),
-                  os
-                  ]
 
         if row_idx == primary1_idx:
             # set flag to pri
@@ -637,6 +604,9 @@ cpdef list fixsam(template, params):
 
     # Set discordant flag on supplementary, convert flags back to string
     for j in range(len(out)):
+
+        if out[j][1][-1][-1] != "\n":
+            out[j][1][-1] += "\n"
         # Set for discordant
         if out[j][0] == "sup":
             rec = out[j][1]

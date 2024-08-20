@@ -1,0 +1,18 @@
+[build-system]
+requires = [
+    "setuptools>=42",
+    "wheel",
+    "cython",
+    "click",
+    "numpy"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dodi"
+version = "0.5.0"
+description = "Choose alignments from a candidate list"
+authors = [{name = "Kez Cleal", email = "clealk@cardiff.ac.uk"}]
+
+[project.scripts]
+dodi = "dodi.main:dodi_choose"

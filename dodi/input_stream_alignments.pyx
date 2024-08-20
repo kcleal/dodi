@@ -2,22 +2,18 @@
 # cython: profile=False
 
 from __future__ import absolute_import
-import multiprocessing
-import pkg_resources
 import click
-import time
-import datetime
 import numpy as np
 import logging
 
+from dodi import io_funcs
+from dodi.samclips cimport fixsam
+from dodi.pairing cimport pairing_process
+from dodi.io_funcs cimport Template, Params, Reader, Writer, make_template, sam_to_array, choose_supplementary
+from libc.stdio cimport FILE, stdout, stdin
 
-from . import pairing, io_funcs, samclips
-from dodi.io_funcs import make_template, sam_to_str
-from dodi.io_funcs cimport Params
-from libc.stdio cimport FILE, stdout
 
-
-cdef extern from "stdio.h":
+cdef extern from "stdio.h":  # manually wrapped, for some reason this needs to be done
     FILE *fopen(const char *, const char *)
     int fclose(FILE *)
     int fputs(const char *, FILE *)
@@ -27,24 +23,27 @@ def echo(*arg):
     click.echo(arg, err=True)
 
 
-cdef void process_template(read_template, params):
-    done = io_funcs.sam_to_array(read_template, params)
-    if done:
-        return
-
-    pairing.process(read_template, params)
-    if not read_template.passed:
-        return
-
-    io_funcs.choose_supplementary(read_template)
-    # if read_template.secondary:
-    #     io_funcs.score_alignments(read_template, params)
-
-
-cpdef list to_output(template, params):
+cdef to_output(Template template, Params params, Writer writer):
     if template.outstr:
-        return list(template.outstr)
-    return samclips.fixsam(template, params)
+        sam = list(template.outstr)
+    else:
+        sam = fixsam(template, params)
+
+    if not sam:
+        logging.error(f"Read dropped QNAME={template.name}, covert to sam failed")
+
+    for i, item in enumerate(sam):
+        seq_len = len(item[8])
+        qual_len = len(item[9])
+        if seq_len != qual_len and item[8] and item[9] != "*":
+            logging.critical(
+                f'SEQ and QUAL not same length, index={i}, qlen={seq_len}, quallen={qual_len} ' +
+                f'{template.name} {sam}'
+            )
+    template_name_with_tab = template.name + "\t"
+    formatted_lines = [template_name_with_tab + "\t".join(item) for item in sam]
+    for item in formatted_lines:
+        writer.write(item.encode('ascii'))
 
 
 def median(L):
@@ -90,7 +89,8 @@ def get_insert_params(L, mads=8):
     mean, stdev = mean_std(L)
     mean = int(mean)
     stdev = int(stdev)
-    logging.info(f"dodi insert size {mean} +/- {stdev}")
+    if logging.DEBUG >= logging.root.level:
+        logging.debug(f"dodi insert size {mean} +/- {stdev}")
     return mean, stdev
 
 
@@ -99,10 +99,10 @@ def insert_size(batch):
     required = 97
     restricted = 3484
     cdef int flag_mask = required | restricted
-
+    cdef int flag
     tlens = []
     for b in batch:
-        for aln, _ in b.inputdata:
+        for aln in b.inputdata:
             flag = int(aln[1])
             if not flag & 2:
                 continue
@@ -113,6 +113,9 @@ def insert_size(batch):
                 rnext = rname
             if rname == rnext and flag & flag_mask == required and tlen >= 0:
                 tlens.append(tlen)
+                break
+        if len(tlens) > 1000:
+            break
 
     if len(tlens) > 0:
         insert_m, insert_stdev = get_insert_params(tlens)
@@ -122,21 +125,36 @@ def insert_size(batch):
     return insert_m, insert_stdev
 
 
-def process_reads(args):
-    t0 = time.time()
-    if args['template_size'] != 'auto':
-        insert_std = args["template_size"].split(",")
-        args["insert_median"] = float(insert_std[0])
-        args["insert_stdev"] = float(insert_std[1])
-    else:
-        args["insert_median"] = 300.
-        args["insert_stdev"] = 200.
+cdef void process_batch(batch, Params params, Writer writer, tree):
+    cdef char * to_write
+    cdef bytes byte_string
+    if params.find_insert_size:
+        insert, insert_std = insert_size(batch)
+        max_d = insert + (4 * insert_std)
+        params.mu = insert
+        params.sigma = insert_std
+        params.default_max_d = max_d
 
-    if not args["include"]:
-        args["bias"] = 1.0
-    else:
-        logging.info("Elevating alignments in --include with --bias {}".format(args["bias"]))
+    cdef int done
+    cdef Template temp
+    c = 0
+    for temp in batch:
+        done = sam_to_array(temp, params, tree)
+        if done < 0:
+            logging.error(f"Read dropped QNAME={temp.name}, sam_to_array failed")
+        elif done:
+            to_output(temp, params, writer)
+        else:
+            pairing_process(temp, params)
+            choose_supplementary(temp)
+            if not temp.passed:
+                logging.error(f"Read dropped QNAME={temp.name}, process failed")
+            to_output(temp, params, writer)
+            c += 1
 
+
+def process_reads(args, batch_size):
+    # Set Writer
     cdef FILE * outsam
     cdef char *fname
     if args["output"] in {"-", "stdout"} or args["output"] is None:
@@ -145,86 +163,60 @@ def process_reads(args):
         filename_byte_string = args["output"].encode("UTF-8")
         fname = filename_byte_string
         outsam = fopen(fname, "rb")
+    if outsam == NULL:
+        raise IOError("Unable to open output file")
 
-    #
-    count = 0
+    cdef Writer writer = Writer()
+    writer.set_ptr(outsam)
 
-    version = pkg_resources.require("dodi")[0].version
-    itr = io_funcs.iterate_mappings(args, version)
-
-    params = Params(args)
-
-    n_jobs = args['procs']
-
-    cdef char* to_write
-    cdef bytes byte_string
-
-    if params.paired_end:
-        batch_size = 10_000
+    # Set Reader
+    cdef FILE * insam
+    if args['sam'] in '-stdin':
+        insam = stdin
     else:
-        batch_size = 100
+        filename_byte_string = args['sam'].encode("UTF-8")
+        fname = filename_byte_string
+        insam = fopen(fname, "rb")
+    if insam == NULL:
+        raise FileNotFoundError(f"No such file or directory: {args['sam']}")
 
-    if n_jobs == 1:
+    cdef Reader reader = Reader()
+    reader.set_ptr(insam)
 
-        header_string = next(itr)
+    # For checking if alignments fall in target regions
+    tree = io_funcs.overlap_regions(args["include"])
 
-        byte_string = header_string.encode('ascii')
-        to_write = byte_string
-        fputs(to_write, outsam)
+    cdef Params params = Params(args)
+    cdef int count = 0
 
-        jobs = []
-        batch = []
-        for rows, last_seen_chrom in itr:
+    first_line = reader.header_to_file(writer, io_funcs.header_info_line(args))
+    if not first_line:
+        return 0
+
+    batch = []
+    rows = [first_line.split("\t", 9)]
+
+    while True:
+        line = reader.read_line()
+        if not line:
+            break
+
+        l = line.split("\t", 9)
+        if len(rows) == 0 or rows[-1][0] == l[0]:
+            rows.append(l)
+
+        elif rows:
             count += 1
-            temp = make_template(rows, last_seen_chrom)
-            batch.append(temp)
-            if len(batch) < batch_size:
-                continue
-            else:
-                # process one batch
-                max_d = params.default_max_d
-                insert = params.mu
-                insert_std = params.sigma
-                if params.find_insert_size:
-                    insert, insert_std = insert_size(batch)
-                    max_d = insert + (4 * insert_std)
-                    params.mu = insert
-                    params.sigma = insert_std
-                    params.default_max_d = max_d
-                for temp in batch:
-                    process_template(temp, params)
-                    if temp.passed:
-                        sam = to_output(temp, params)
-                        if sam:
-                            byte_string = sam_to_str(temp.name, sam).encode('ascii')
-                            to_write = byte_string
-                            fputs(to_write, outsam)
+            batch.append(make_template(rows))
+            if len(batch) >= batch_size:
+                process_batch(batch, params, writer, tree)
                 batch = []
+            rows = [l]
 
-        if len(batch) > 0:
+    if rows:
+        count += 1
+        batch.append(make_template(rows))
+    if batch:
+        process_batch(batch, params, writer, tree)
 
-            max_d = params.default_max_d
-            insert = params.mu
-            insert_std = params.sigma
-            if params.find_insert_size:
-                insert, insert_std = insert_size(batch)
-                max_d = insert + (4 * insert_std)
-                params.mu = insert
-                params.sigma = insert_std
-                params.default_max_d = max_d
-
-            for temp in batch:
-                process_template(temp, params)
-                if temp.passed:
-                    sam = to_output(temp, params)
-                    if sam:
-                        byte_string = sam_to_str(temp.name, sam).encode('ascii')
-                        to_write = byte_string
-                        fputs(to_write, outsam)
-
-            batch = []
-
-    fclose(outsam)
-
-    logging.info("dodi completed in {} h:m:s".format(str(datetime.timedelta(seconds=int(time.time() - t0)))),
-               )
+    return count
