@@ -110,9 +110,8 @@ def dodi_choose(**kwargs):
                  )
 
 
-def test_command(ctx, **kwargs):
-    """Run dysgu tests"""
-    pass
+# def test_command(ctx, **kwargs):
+    # pass
     # tests_path = os.path.dirname(__file__) + "/tests"
     #
     # runner = CliRunner()
