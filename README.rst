@@ -10,15 +10,8 @@ Installation
 Install using::
 
     $ git clone https://github.com/kcleal/dodi.git; cd dodi
-    $ python setup.py install
+    $ pip install .
 
-To satisfy requirements::
-
-    $ pip install -r requirements.txt; python setup.py install
-
-Run tests::
-
-    $ dodi test
 
 Requires Python>=3.6, cython and >=c++11 compiler.
 Python packages needed are listed in requirements.txt.
