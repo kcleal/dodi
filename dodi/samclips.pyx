@@ -5,12 +5,10 @@
 Utils to generate proper sam output and flag information
 """
 from __future__ import absolute_import
-import math
 import re
 import click
 from dodi import io_funcs
 from dodi.io_funcs cimport get_align_end_offset, Template, Params
-from sys import stderr
 
 
 def echo(*arg):
