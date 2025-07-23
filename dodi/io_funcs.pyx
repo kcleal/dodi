@@ -9,7 +9,6 @@ cimport numpy as np
 from collections import defaultdict
 import os
 import click
-from sys import stderr
 import logging
 
 ctypedef np.float_t DTYPE_t

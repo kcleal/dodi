@@ -10,10 +10,7 @@ from __future__ import absolute_import
 import numpy as np
 cimport numpy as np
 from libc.math cimport exp, log, sqrt, fabs
-from libcpp.vector cimport vector
 from dodi.io_funcs cimport Template, Params, PathResult
-import time
-from sys import stderr
 
 
 ctypedef np.float_t DTYPE_t

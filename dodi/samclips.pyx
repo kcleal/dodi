@@ -5,12 +5,11 @@
 Utils to generate proper sam output and flag information
 """
 from __future__ import absolute_import
-import math
 import re
 import click
 from dodi import io_funcs
 from dodi.io_funcs cimport get_align_end_offset, Template, Params
-from sys import stderr
+import logging
 
 
 def echo(*arg):
@@ -346,48 +345,88 @@ cdef add_sequence_back(item, reverse_me, template):
 
 
 cdef list replace_sa_tags(alns):
+    """
+    because original sa tags will contain all original alignments, re-generate the SA tag content with only the 
+    alignments remaining following dodi filtering
+    :param alns: list containing all alignment info for all alignments
+    :return: same info in same format, with relevant SAs removed from SA tags
+    """
+    # if there are no alignments, return
     if len(alns) == 0:
         return alns
 
+    # if any of the alignments are supplementary, then re-generate the SA tags to ensure relevant info is removed
     if any([i[0] == "sup" for i in alns]):
         sa_tags = {}  # Read1: tag, might be multiple split alignments
         alns2 = []
-        for i, j, k in alns:
+        for i, j, k in alns:  # i = aln type (e.g. sup/pri), j = aln info as a list, k = Bool, whether to reverse (???)
+            # logging.debug(f"{i}, {k}")
             # Remove any SA tags in alignment, might be wrong
             j = [item for idx, item in enumerate(j) if idx <= 9 or (idx > 9 and not item.startswith("SA"))]
+
+            # extract relevant information to re-create SA tags
             flag = j[0]
-            mapq = j[3]
-            nm = 0
             chrom = j[1]
             pos = j[2]
+            mapq = j[3]
+            cigar = j[4]
+            nm = 0
+
+            # get the nm tag info
             for tg in j[10:]:
                 if tg.startswith("NM"):
                     nm = tg[5:]
                     break
 
+            # set strand information
             strand = "-" if flag & 16 else "+"
-            cigar = j[4]
-            sa = f"{chrom},{pos},{strand},{cigar},{mapq},{nm}"
 
-            key = (flag & 64, 1 if flag & 2048 else 0)
-            if key in sa_tags:
-                sa_tags[key] += ";" + sa
+            # create the sa information string
+            # in sam files, all SA tags end in ';', therefore it can be added at this stage
+            sa = f"{chrom},{pos},{strand},{cigar},{mapq},{nm};"
+
+            # determine whether paired end, and whether first in pair
+            first_in_pair = flag & 64
+
+            # debug statements for dev
+            logging.debug(first_in_pair)
+            logging.debug(sa)
+
+            # use first in pair flag info (0 or 1) to correctly populate SA tags for each read in a pair
+            # for single end read data, there will only be one key (all items enter the same element)
+            if first_in_pair in sa_tags:
+                sa_tags[first_in_pair].append(sa)
             else:
-                sa_tags[key] = sa
-            alns2.append([i, j, k])
+                sa_tags[first_in_pair] = [sa]
 
-        # Now add back in
+            # append the alignment list object, plus the SA info for the alignment, to the list of alns for the read
+            alns2.append([i, j, k, sa, first_in_pair])
+
+        # Now add SA tag info back in, excluding self (SA tag order will not necessarily be preserved from input file)
         out = []
-        for i, j, k in alns2:
-            flag = j[0]
-            key = (flag & 64, 0 if flag & 2048 else 1)
-            if key in sa_tags:
+        for i, j, k, sa, fip in alns2:
+            # use first in pair info to access the relevant dict item
+            if fip in sa_tags:
+                # create SA tag string from list of SAs (excluding self), without altering the reference list
+                sa_string = ""
+                for each in sa_tags[fip]:
+                    # if not self, then append
+                    if not each == sa:
+                        sa_string += each
+
+            # if any non-self alignments, add SA tag to alignment
+            if sa_string:
+                # remove any newline characters from the ends of existing alignment file lines, e.g. XA tags
                 if j[-1][-1] == "\n":
                     j[-1] = j[-1].rstrip('\n')
-                j.append(f"SA:Z:{sa_tags[key]}\n")
+                # append the SA string to the list of alignment file fields
+                j.append(f"SA:Z:{sa_string}\n")
+            # append the edited alignment list to the list of all alignments for the read, to be returned
             out.append((i, j, k))
         return out
     else:
+        # if there aren't any supplementary alignments for the read, then just remove the SA tag
+        # (unlikely to exist anyway), and return
         return [(i, [item for idx, item in enumerate(j) if idx <= 9 or (idx > 9 and not item.startswith("SA"))], ii) for i, j, ii in alns]
 
 

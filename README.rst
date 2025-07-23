@@ -14,7 +14,6 @@ Install using::
 
 
 Requires Python>=3.6, cython and >=c++11 compiler.
-Python packages needed are listed in requirements.txt.
 
 
 Usage
