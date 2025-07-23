@@ -357,7 +357,7 @@ cdef list replace_sa_tags(alns):
 
     # if any of the alignments are supplementary, then re-generate the SA tags to ensure relevant info is removed
     if any([i[0] == "sup" for i in alns]):
-        sas = []
+        sa_tags = {}  # Read1: tag, might be multiple split alignments
         alns2 = []
         for i, j, k in alns:  # i = aln type (e.g. sup/pri), j = aln info as a list, k = Bool, whether to reverse (???)
             # logging.debug(f"{i}, {k}")
@@ -385,25 +385,34 @@ cdef list replace_sa_tags(alns):
             # in sam files, all SA tags end in ';', therefore it can be added at this stage
             sa = f"{chrom},{pos},{strand},{cigar},{mapq},{nm};"
 
+            # determine whether paired end, and whether first in pair
+            first_in_pair = flag & 64
+
+            # debug statements for dev
+            logging.debug(first_in_pair)
             logging.debug(sa)
 
-            # append the SA info to the list of SA info
-            sas.append(sa)
+            # use first in pair flag info (0 or 1) to correctly populate SA tags for each read in a pair
+            # for single end read data, there will only be one key (all items enter the same element)
+            if first_in_pair in sa_tags:
+                sa_tags[first_in_pair].append(sa)
+            else:
+                sa_tags[first_in_pair] = [sa]
 
             # append the alignment list object, plus the SA info for the alignment, to the list of alns for the read
-            alns2.append([i, j, k, sa])
+            alns2.append([i, j, k, sa, first_in_pair])
 
         # Now add SA tag info back in, excluding self (SA tag order will not necessarily be preserved from input file)
         out = []
-        for i, j, k, sa in alns2:
-            flag = j[0]
-
-            # create SA tag string from list of SAs (excluding self), without altering the reference list
-            sa_string = ""
-            for each in sas:
-                # if not self, then append
-                if not each == sa:
-                    sa_string += each
+        for i, j, k, sa, fip in alns2:
+            # use first in pair info to access the relevant dict item
+            if fip in sa_tags:
+                # create SA tag string from list of SAs (excluding self), without altering the reference list
+                sa_string = ""
+                for each in sa_tags[fip]:
+                    # if not self, then append
+                    if not each == sa:
+                        sa_string += each
 
             # if any non-self alignments, add SA tag to alignment
             if sa_string:
